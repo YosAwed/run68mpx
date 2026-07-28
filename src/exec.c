@@ -94,16 +94,10 @@ int prog_exec()
 			save_s = SR_S_REF();
 			SR_S_ON();
 			adr = mem_get( 0x28, S_LONG );
-			if ( adr != HUMAN_WORK ) {
-				ra [ 7 ] = run68_sub32(ra [ 7 ], 4);
-				mem_set( ra [ 7 ], pc, S_LONG );
-				ra [ 7 ] = run68_sub32(ra [ 7 ], 2);
-				mem_set( ra [ 7 ], sr, S_WORD );
-				pc = adr;
-				return( FALSE );
-			}
 			if ( save_s == 0 )
 				SR_S_OFF();
+			if ( adr != HUMAN_WORK )
+				return cpu_enter_exception(10, pc);
 			pc = run68_add32(pc, 2);
 			err68( "A系列割り込みを実行しました" );
 			return( TRUE );

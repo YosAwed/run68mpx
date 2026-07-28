@@ -8,6 +8,7 @@ Long ra[8];
 Long rd[9];
 Long pc;
 Long usp;
+Long ssp;
 short sr;
 int trap_count;
 
@@ -448,6 +449,8 @@ static void test_return_instructions(void)
 
 	begin_control_test();
 	ra[7] = 0x1000;
+	usp = 0x1800;
+	ssp = 0x1000;
 	sr = 0x2000;
 	control_word_address = 0x1000;
 	control_word_value = 0x001f;
@@ -456,7 +459,7 @@ static void test_return_instructions(void)
 	trap_count = 0;
 	if (line4(rte) != FALSE || unexpected_error ||
 	    (UShort)sr != 0x001f || (ULong)pc != UINT32_C(0x12345678) ||
-	    ra[7] != 0x1006 || trap_count != RAS_INTERVAL) {
+	    ra[7] != 0x1800 || ssp != 0x1006 || trap_count != RAS_INTERVAL) {
 		fprintf(stderr,
 		        "RTE failed: SR=%04x PC=%08x A7=%08x trap=%d err=%d\n",
 		        (UShort)sr, (ULong)pc, (ULong)ra[7], trap_count,
@@ -502,15 +505,17 @@ static void test_traps(void)
 	begin_control_test();
 	pc = 0x100;
 	ra[7] = 0x1000;
+	ssp = 0x2000;
 	sr = (short)0x8015;
 	control_vector_address = 0x00a4; /* vector 32 + 9 */
 	control_vector_value = (Long)UINT32_C(0x123400);
 	if (line4(trap9) != FALSE || unexpected_error ||
-	    (ULong)pc != UINT32_C(0x123400) || ra[7] != 0x0ffa ||
+	    (ULong)pc != UINT32_C(0x123400) || usp != 0x1000 ||
+	    ra[7] != 0x1ffa || ssp != 0x1ffa ||
 	    (UShort)sr != 0x2015 || movem_write_count != 2 ||
-	    movem_write_address[0] != 0x0ffc || movem_write_data[0] != 0x102 ||
+	    movem_write_address[0] != 0x1ffc || movem_write_data[0] != 0x102 ||
 	    movem_write_size[0] != S_LONG ||
-	    movem_write_address[1] != 0x0ffa ||
+	    movem_write_address[1] != 0x1ffa ||
 	    (UShort)movem_write_data[1] != 0x8015 ||
 	    movem_write_size[1] != S_WORD) {
 		fprintf(stderr,
@@ -522,6 +527,7 @@ static void test_traps(void)
 
 	pc = 0x200;
 	ra[7] = 0x1000;
+	ssp = 0x2000;
 	sr = 0;
 	movem_write_count = 0;
 	unexpected_error = 0;
@@ -534,13 +540,15 @@ static void test_traps(void)
 
 	pc = 0x200;
 	ra[7] = 0x1000;
+	ssp = 0x2000;
 	sr = 0x0002;
 	movem_write_count = 0;
 	control_vector_address = 0x001c; /* vector 7 */
 	control_vector_value = (Long)UINT32_C(0xabcdef);
 	unexpected_error = 0;
 	if (line4(trapv) != FALSE || unexpected_error ||
-	    (ULong)pc != UINT32_C(0xabcdef) || ra[7] != 0x0ffa ||
+	    (ULong)pc != UINT32_C(0xabcdef) || usp != 0x1000 ||
+	    ra[7] != 0x1ffa || ssp != 0x1ffa ||
 	    (UShort)sr != 0x2002 || movem_write_count != 2) {
 		fprintf(stderr, "TRAPV set failed: SR=%04x PC=%08x A7=%08x err=%d\n",
 		        (UShort)sr, (ULong)pc, (ULong)ra[7], unexpected_error);

@@ -12,6 +12,20 @@ short sr;
 static int failures;
 static int unexpected_error;
 static Long immediate;
+static int exception_vector;
+static Long exception_pc;
+
+void cpu_set_sr(UShort new_sr)
+{
+	sr = (short)new_sr;
+}
+
+BOOL cpu_enter_exception(int vector_number, Long stacked_pc)
+{
+	exception_vector = vector_number;
+	exception_pc = stacked_pc;
+	return FALSE;
+}
 
 Long imi_get(char size)
 {
@@ -144,8 +158,13 @@ static void test_eori_to_sr(void)
 	sr = 0x001f;
 	pc = 0;
 	unexpected_error = 0;
-	if (line0(opcode) != TRUE || !unexpected_error || pc != 2) {
-		fprintf(stderr, "unprivileged EORI to SR was not rejected\n");
+	exception_vector = -1;
+	exception_pc = -1;
+	if (line0(opcode) != FALSE || unexpected_error || pc != 2 ||
+	    exception_vector != 8 || exception_pc != 0) {
+		fprintf(stderr,
+		        "unprivileged EORI to SR exception=%d pc=%08x\n",
+		        exception_vector, (ULong)exception_pc);
 		failures++;
 	}
 }

@@ -11,6 +11,15 @@ short sr;
 
 static int failures;
 static int unexpected_error;
+static int exception_vector;
+static Long exception_pc;
+
+BOOL cpu_enter_exception(int vector_number, Long stacked_pc)
+{
+	exception_vector = vector_number;
+	exception_pc = stacked_pc;
+	return FALSE;
+}
 
 BOOL get_data_at_ea(int accepted, int mode, int reg, int size, Long *data)
 {
@@ -119,6 +128,36 @@ static void test_divs_overflow(void)
 	expect_u32("DIVS overflow sets V", 0x2, (ULong)sr & 0x2u);
 }
 
+static void test_divide_by_zero_exception(void)
+{
+	char divu[2] = {(char)0x82, (char)0xc2};
+	char divs[2] = {(char)0x83, (char)0xc2};
+
+	memset(rd, 0, sizeof(rd));
+	rd[1] = 12345;
+	rd[2] = 0;
+	pc = 0;
+	unexpected_error = 0;
+	exception_vector = -1;
+	exception_pc = -1;
+	if (line8(divu) != FALSE || unexpected_error ||
+	    exception_vector != 5 || exception_pc != 2 || rd[1] != 12345) {
+		fprintf(stderr, "DIVU zero exception=%d pc=%08x\n",
+		        exception_vector, (ULong)exception_pc);
+		failures++;
+	}
+
+	pc = 0;
+	exception_vector = -1;
+	exception_pc = -1;
+	if (line8(divs) != FALSE || unexpected_error ||
+	    exception_vector != 5 || exception_pc != 2 || rd[1] != 12345) {
+		fprintf(stderr, "DIVS zero exception=%d pc=%08x\n",
+		        exception_vector, (ULong)exception_pc);
+		failures++;
+	}
+}
+
 static unsigned pack_bcd(unsigned value)
 {
 	return ((value / 10u) << 4) | (value % 10u);
@@ -172,6 +211,7 @@ int main(void)
 	test_divu_remainder();
 	test_divs_negative_remainder();
 	test_divs_overflow();
+	test_divide_by_zero_exception();
 	test_sbcd();
 	return failures == 0 ? 0 : 1;
 }

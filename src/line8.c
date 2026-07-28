@@ -184,8 +184,7 @@ static	int	Divu( char code1, char code2 )
 	waru = (UShort)waru_l;
 
 	if ( waru == 0 ) {
-		err68a( "０で除算しました", __FILE__, __LINE__ );
-		return( TRUE );
+		return cpu_enter_exception(5, pc);
 	}
 
 	CCR_C_OFF();
@@ -242,8 +241,7 @@ static	int	Divs( char code1, char code2 )
 	waru = (UShort)waru_l;
 
 	if ( waru == 0 ) {
-		err68a( "０で除算しました", __FILE__, __LINE__ );
-		return( TRUE );
+		return cpu_enter_exception(5, pc);
 	}
 
 	CCR_C_OFF();

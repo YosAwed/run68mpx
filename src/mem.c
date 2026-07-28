@@ -28,6 +28,7 @@ static	int	mem_red_chk( Long, char );
 static	int	mem_wrt_chk( Long, char );
 static	ULong	mem_normalize_address( Long );
 static	ULong	mem_access_width( char );
+static	void	mem_address_exception( Long, BOOL );
 void	run68_abort( Long );
 
 /*
@@ -98,6 +99,8 @@ Long mem_get( Long adr, char size )
 			return( 0 );
 	}
 	if (size != S_BYTE && (normalized & 1u) != 0) {
+		if (cpu_instruction_active)
+			mem_address_exception((Long)normalized, FALSE);
 		if ( mem_red_chk( (Long)normalized, size ) == FALSE )
 			return( 0 );
 	}
@@ -134,6 +137,8 @@ void mem_set( Long adr, Long d, char size )
 			return;
 	}
 	if (size != S_BYTE && (normalized & 1u) != 0) {
+		if (cpu_instruction_active)
+			mem_address_exception((Long)normalized, TRUE);
 		if ( mem_wrt_chk( (Long)normalized, size ) == FALSE )
 			return;
 	}
@@ -235,6 +240,23 @@ static ULong mem_access_width(char size)
 		default:
 			return 4;
 	}
+}
+
+static void mem_address_exception(Long address, BOOL is_write)
+{
+	ULong instruction_pc = (ULong)OP_info.pc & 0x00ffffffu;
+	UShort instruction = 0;
+
+	if (instruction_pc + 1u < (ULong)mem_aloc) {
+		UChar *bytes = (UChar *)prog_ptr + instruction_pc;
+		instruction = (UShort)(((UShort)bytes[0] << 8) | bytes[1]);
+	}
+
+	/* Prevent a recursive frame if the supervisor stack itself is invalid. */
+	cpu_instruction_active = FALSE;
+	cpu_enter_address_error(address, OP_info.pc, instruction, is_write,
+	                        FALSE);
+	longjmp(jmp_when_abort, RUN68_ABORT_CPU_EXCEPTION);
 }
 
 /*

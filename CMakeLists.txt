@@ -51,6 +51,7 @@ set(SRC
     src/datetime.c
     src/disassemble.c
     src/eaaccess.c
+    src/exceptions.c
     src/exec.c
     src/getini.c
     src/key.c
@@ -93,6 +94,7 @@ if(BUILD_TESTING)
   add_executable(run68_test_mem
     tests/test_mem.c
     src/mem.c
+    src/exceptions.c
   )
   target_include_directories(run68_test_mem PRIVATE src)
   add_test(NAME memory_access COMMAND run68_test_mem)
@@ -143,6 +145,7 @@ if(BUILD_TESTING)
   add_executable(run68_test_line4_nbcd
     tests/test_line4_nbcd.c
     src/line4.c
+    src/exceptions.c
   )
   target_include_directories(run68_test_line4_nbcd PRIVATE src)
   add_test(NAME line4_core COMMAND run68_test_line4_nbcd)
@@ -197,6 +200,13 @@ if(BUILD_TESTING)
   )
   target_include_directories(run68_test_lineb PRIVATE src)
   add_test(NAME compare_instructions COMMAND run68_test_lineb)
+
+  add_executable(run68_test_exceptions
+    tests/test_exceptions.c
+    src/exceptions.c
+  )
+  target_include_directories(run68_test_exceptions PRIVATE src)
+  add_test(NAME exception_frames COMMAND run68_test_exceptions)
 endif()
 
 if(RUN68_ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
@@ -218,7 +228,8 @@ if(RUN68_ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
             run68_test_addsubx
             run68_test_linef
             run68_test_line0
-            run68_test_lineb)
+            run68_test_lineb
+            run68_test_exceptions)
       target_compile_options(${test_target} PRIVATE ${RUN68_SANITIZER_FLAGS})
       target_link_options(${test_target} PRIVATE ${RUN68_SANITIZER_FLAGS})
     endforeach()

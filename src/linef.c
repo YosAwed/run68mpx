@@ -152,8 +152,7 @@ int	linef( char *pc_ptr )
 	if ( code == (char)0xFE )
 		return( fefunc( *pc_ptr ) );
 
-	err68a( "未定義のＦライン命令を実行しました", __FILE__, __LINE__ );
-	return( TRUE );
+	return cpu_enter_exception(11, run68_sub32(pc, 2));
 }
 
 /*
@@ -170,16 +169,10 @@ static	int	fefunc( UChar code )
 	save_s = SR_S_REF();
 	SR_S_ON();
 	adr = mem_get( 0x2C, S_LONG );
-	if ( adr != HUMAN_WORK ) {
-		ra [ 7 ] = Add32(ra [ 7 ], -4);
-		mem_set( ra [ 7 ], run68_sub32(pc, 2), S_LONG );
-		ra [ 7 ] = Add32(ra [ 7 ], -2);
-		mem_set( ra [ 7 ], sr, S_WORD );
-		pc = adr;
-		return( FALSE );
-	}
 	if ( save_s == 0 )
 		SR_S_OFF();
+	if ( adr != HUMAN_WORK )
+		return cpu_enter_exception(11, run68_sub32(pc, 2));
 
 #ifdef	TRACE
 	printf( "trace: FEFUNC   0xFE%02X PC=%06lX\n", code, pc );

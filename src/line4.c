@@ -73,8 +73,6 @@ static	int	Not( char );
 static	int	Jmp( char, char );
 static	int	Jsr( char );
 static	int	Trap( char );
-static	int	EnterException( int );
-static	int	Rte( void );
 static	int	Rts( void );
 static	int	Rtr( void );
 static	int	Nbcd( char );
@@ -164,13 +162,16 @@ int	line4( char *pc_ptr )
 				return( Trap( code2 ) );
 			if ( code2 == 0x71 )	/* nop */
 				return( FALSE );
-			if ( code2 == 0x73 )
-				return( Rte() );
+			if ( code2 == 0x73 ) {
+				if (SR_S_REF() == 0)
+					return cpu_enter_exception(8, adjust_address(pc, -2));
+				return cpu_return_from_exception();
+			}
 			if ( code2 == 0x75 )
 				return( Rts() );
 			if ( code2 == 0x76 ) {
 				if (CCR_V_REF() != 0)
-					return EnterException(7);
+					return cpu_enter_exception(7, pc);
 				return FALSE;
 			}
 			if ( code2 == 0x77 )
@@ -190,8 +191,7 @@ int	line4( char *pc_ptr )
 			break;
 	}
 
-	err68a( "未定義命令を実行しました", __FILE__, __LINE__ );
-	return( TRUE );
+	return cpu_enter_exception(4, adjust_address(pc, -2));
 }
 
 /*
@@ -608,8 +608,7 @@ static	int	Move_t_sr( char code )
 	reg = (code & 0x07);
 
 	if ( SR_S_REF() == 0 ) {
-		err68a( "特権命令を実行しました", __FILE__, __LINE__ );
-		return( TRUE );
+		return cpu_enter_exception(8, adjust_address(pc, -2));
 	}
 
 	/* MOVE <ea>,SR accepts data addressing modes, including immediate. */
@@ -617,7 +616,7 @@ static	int	Move_t_sr( char code )
 		return(TRUE);
 	}
 
-	sr = (short)data;
+	cpu_set_sr((UShort)data);
 
 #ifdef	TRACE
 	printf( "trace: move_t_sr PC=%06lX\n", save_pc );
@@ -636,8 +635,7 @@ static	int	Move_f_usp( char code )
 	char	reg;
 
 	if ( SR_S_REF() == 0 ) {
-		err68a( "特権命令を実行しました", __FILE__, __LINE__ );
-		return( TRUE );
+		return cpu_enter_exception(8, adjust_address(pc, -2));
 	}
 
 	reg = (code & 0x07);
@@ -661,8 +659,7 @@ static	int	Move_t_usp( char code )
 	char	reg;
 
 	if ( SR_S_REF() == 0 ) {
-		err68a( "特権命令を実行しました", __FILE__, __LINE__ );
-		return( TRUE );
+		return cpu_enter_exception(8, adjust_address(pc, -2));
 	}
 
 	reg = (code & 0x07);
@@ -1077,44 +1074,7 @@ static	int	Trap( char code )
 	if (trap_number == 15) {
 		return( iocs_call() );
 	}
-	return EnterException(32 + trap_number);
-}
-
-static int EnterException(int vector_number)
-{
-	short old_sr = sr;
-
-	ra [ 7 ] = adjust_address(ra [ 7 ], -4);
-	mem_set(ra [ 7 ], pc, S_LONG);
-	ra [ 7 ] = adjust_address(ra [ 7 ], -2);
-	mem_set(ra [ 7 ], old_sr, S_WORD);
-	sr = (short)((old_sr | 0x2000) & 0x7fff);
-	pc = mem_get((Long)((ULong)vector_number * 4u), S_LONG);
-	return FALSE;
-}
-
-/*
- 　機能：rte命令を実行する
- 戻り値： TRUE = 実行終了
- 戻り値：FALSE = 実行継続
-*/
-static	int	Rte()
-{
-#ifdef	TRACE
-	printf( "trace: rte      PC=%06lX\n", pc );
-#endif
-
-	if ( SR_S_REF() == 0 ) {
-		err68a( "特権命令を実行しました", __FILE__, __LINE__ );
-		return( TRUE );
-	}
-	sr = (short)mem_get( ra [ 7 ], S_WORD );
-	ra [ 7 ] = adjust_address(ra [ 7 ], 2);
-	pc = mem_get( ra [ 7 ], S_LONG );
-	ra [ 7 ] = adjust_address(ra [ 7 ], 4);
-	trap_count = RAS_INTERVAL;
-
-	return( FALSE );
+	return cpu_enter_exception(32 + trap_number, pc);
 }
 
 /*

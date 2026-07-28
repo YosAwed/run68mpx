@@ -313,6 +313,7 @@ extern HANDLE stdin_handle;
 
 /* 命令実行情報 */
 extern EXEC_INSTRUCTION_INFO OP_info;
+extern BOOL cpu_instruction_active;
 void	term( int ) ;
 
 /* getini.c */
@@ -418,6 +419,7 @@ void check(char *mode, Long src, Long dest, Long result, int size, short before)
 	Long	ra [ 8 ] ;	/* アドレスレジスタ */
 	Long	rd [ 8 + 1 ] ;	/* データレジスタ */
 	Long	usp ;		/* USP */
+	Long	ssp ;		/* SSP */
 	Long	pc ;		/* プログラムカウンタ */
 	short	sr ;		/* ステータスレジスタ */
 	char	*prog_ptr ;	/* プログラムをロードしたメモリへのポインタ */
@@ -435,6 +437,7 @@ void check(char *mode, Long src, Long dest, Long result, int size, short before)
 	extern	Long	ra [ 8 ] ;
 	extern	Long	rd [ 8 + 1 ] ;
 	extern	Long	usp ;
+	extern	Long	ssp ;
 	extern	Long	pc ;
 	extern	short	sr ;
 	extern	char	*prog_ptr ;
@@ -446,6 +449,16 @@ void check(char *mode, Long src, Long dest, Long result, int size, short before)
 	extern	char	nest_cnt ;
 	extern	Long	mem_aloc ;
 #endif
+
+/* exceptions.c */
+void cpu_set_sr(UShort new_sr);
+BOOL cpu_enter_exception(int vector_number, Long stacked_pc);
+BOOL cpu_enter_address_error(Long fault_address, Long stacked_pc,
+                             UShort instruction, BOOL is_write,
+                             BOOL instruction_access);
+BOOL cpu_return_from_exception(void);
+
+#define RUN68_ABORT_CPU_EXCEPTION 3
 
 /*
 ０ライン命令：movep, addi, subi, cmpi, andi, eori, ori, btst, bset, bclr, bchg

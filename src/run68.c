@@ -116,6 +116,7 @@ char *strlwr(char *str)
 
  /* 命令実行情報(グローバル変数) */
 EXEC_INSTRUCTION_INFO OP_info;
+BOOL cpu_instruction_active = FALSE;
 
 int main( int argc, char *argv[], char *envp[] )
 {
@@ -386,8 +387,9 @@ Restart:
 
 	/* 実行 */
 	ra [ 7 ] = STACK_TOP + STACK_SIZE;
+	usp = ra [ 7 ];
+	ssp = ra [ 7 ];
 	superjsr_ret = 0;
-	usp = 0;
 	if ( ini_info.trap_emulate == TRUE )
 		ret = exec_trap(&restart);
 	else
@@ -527,7 +529,11 @@ static int exec_trap(BOOL *restart)
                 debug_on = 1;
             }
         }
-		if ( (pc & 0xFF000001) != 0 ) {
+		if (((ULong)pc & 1u) != 0) {
+			cpu_enter_address_error(pc, pc, 0, FALSE, TRUE);
+			continue;
+		}
+		if (((ULong)pc & 0xff000000u) != 0) {
 			err68b( "アドレスエラーが発生しました", pc, OPBuf_getentry(0)->pc);
 			break;
 		}
@@ -537,10 +543,14 @@ NextInstruction:
         OP_info.code = *((unsigned short*)(prog_ptr + pc));
         if ((ret = setjmp(jmp_when_abort)) != 0)
         {
-            debug_on = TRUE;
+			cpu_instruction_active = FALSE;
+			if (ret != RUN68_ABORT_CPU_EXCEPTION)
+				debug_on = TRUE;
             continue;
         }
+		cpu_instruction_active = TRUE;
         ecode = prog_exec();
+		cpu_instruction_active = FALSE;
         if (ecode == TRUE)
         {
             running = FALSE;
@@ -636,7 +646,11 @@ static int exec_notrap(BOOL *restart)
                 debug_on = 1;
             }
         }
-		if ( (pc & 0xFF000001) != 0 ) {
+		if (((ULong)pc & 1u) != 0) {
+			cpu_enter_address_error(pc, pc, 0, FALSE, TRUE);
+			continue;
+		}
+		if (((ULong)pc & 0xff000000u) != 0) {
 			err68b( "アドレスエラーが発生しました", pc, OPBuf_getentry(0)->pc);
 			break;
 		}
@@ -646,10 +660,14 @@ NextInstruction:
 		OP_info.code = *((unsigned short*)(prog_ptr + pc));
 		if ((ret = setjmp(jmp_when_abort)) != 0)
 		{
-			debug_on = TRUE;
+			cpu_instruction_active = FALSE;
+			if (ret != RUN68_ABORT_CPU_EXCEPTION)
+				debug_on = TRUE;
 			continue;
 		}
+		cpu_instruction_active = TRUE;
 		ecode = prog_exec();
+		cpu_instruction_active = FALSE;
 		if (ecode == TRUE) {
 			running = FALSE;
 			if (debug_flag)

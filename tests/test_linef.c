@@ -13,11 +13,21 @@ Long mem_aloc = 0x01000000;
 
 static int failures;
 static int unexpected_error;
+static Long fline_vector = HUMAN_WORK;
+static int exception_vector;
+static Long exception_pc;
+
+BOOL cpu_enter_exception(int vector_number, Long stacked_pc)
+{
+	exception_vector = vector_number;
+	exception_pc = stacked_pc;
+	return FALSE;
+}
 
 Long mem_get(Long address, char size)
 {
 	if (address == 0x2c && size == S_LONG)
-		return HUMAN_WORK;
+		return fline_vector;
 	unexpected_error = 1;
 	return 0;
 }
@@ -139,11 +149,42 @@ static void test_supervisor_state_is_restored(void)
 	expect_u32("FEFUNC preserves CCR", 0x15, (ULong)(UShort)sr & 0x1fu);
 }
 
+static void test_fline_exception_routing(void)
+{
+	char undefined_opcode[2] = {(char)0xfd, 0};
+	char float_opcode[2] = {(char)0xfe, 0};
+
+	pc = 0;
+	sr = 0x0015;
+	exception_vector = -1;
+	exception_pc = -1;
+	if (linef(undefined_opcode) != FALSE || exception_vector != 11 ||
+	    exception_pc != 0) {
+		fprintf(stderr, "F-line exception=%d pc=%08x\n",
+		        exception_vector, (ULong)exception_pc);
+		failures++;
+	}
+
+	pc = 0;
+	sr = 0x0015;
+	fline_vector = 0x123400;
+	exception_vector = -1;
+	exception_pc = -1;
+	if (linef(float_opcode) != FALSE || exception_vector != 11 ||
+	    exception_pc != 0 || ((UShort)sr & 0x2000u) != 0) {
+		fprintf(stderr, "FE vector exception=%d pc=%08x sr=%04x\n",
+		        exception_vector, (ULong)exception_pc, (UShort)sr);
+		failures++;
+	}
+	fline_vector = HUMAN_WORK;
+}
+
 int main(void)
 {
 	test_signed_arithmetic();
 	test_full_width_imul();
 	test_float_packing();
 	test_supervisor_state_is_restored();
+	test_fline_exception_routing();
 	return failures == 0 ? 0 : 1;
 }

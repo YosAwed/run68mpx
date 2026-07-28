@@ -217,8 +217,7 @@ static	int	Ori_t_sr()
 	short	data;
 
 	if ( SR_S_REF() == 0 ) {
-		err68a( "特権命令を実行しました", __FILE__, __LINE__ );
-		return( TRUE );
+		return cpu_enter_exception(8, run68_sub32(pc, 2));
 	}
 
 	data = (short)imi_get( S_WORD );
@@ -228,7 +227,7 @@ static	int	Ori_t_sr()
 #endif
 
 	/* SRをセット */
-	sr |= data;
+	cpu_set_sr((UShort)sr | (UShort)data);
 
 	return( FALSE );
 }
@@ -330,8 +329,7 @@ static	int	Andi_t_sr()
 	short	data;
 
 	if ( SR_S_REF() == 0 ) {
-		err68a( "特権命令を実行しました", __FILE__, __LINE__ );
-		return( TRUE );
+		return cpu_enter_exception(8, run68_sub32(pc, 2));
 	}
 
 	data = (short)imi_get( S_WORD );
@@ -341,7 +339,7 @@ static	int	Andi_t_sr()
 #endif
 
 	/* SRをセット */
-	sr &= data;
+	cpu_set_sr((UShort)sr & (UShort)data);
 
 	return( FALSE );
 }
@@ -605,12 +603,11 @@ static	int	Eori_t_sr()
 	short data;
 
 	if ( SR_S_REF() == 0 ) {
-		err68a( "特権命令を実行しました", __FILE__, __LINE__ );
-		return( TRUE );
+		return cpu_enter_exception(8, run68_sub32(pc, 2));
 	}
 
 	data = (short)imi_get( S_WORD );
-	sr ^= data;
+	cpu_set_sr((UShort)sr ^ (UShort)data);
 	return( FALSE );
 }
 
