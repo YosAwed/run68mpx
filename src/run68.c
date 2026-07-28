@@ -71,6 +71,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "run68.h"
+#include "cpu_backend.h"
 #if defined(DOSX)
 #include <dos.h>
 #endif
@@ -149,6 +150,13 @@ Restart:
         {
             BOOL invalid_flag = FALSE;
             char *fsp = argv[i];
+            if (strncmp(argv[i], "--cpu=", 6) == 0) {
+                if (!cpu_backend_select(argv[i] + 6)) {
+                    fprintf(stderr, "不明なMPUバックエンドです: %s\n", argv[i] + 6);
+                    return 1;
+                }
+                continue;
+            }
             switch(argv[i][1])
             {
             case 't':
@@ -245,6 +253,7 @@ Restart:
 		fprintf(stderr, "             -f         function call trace\n");
 		fprintf(stderr, "             -t         mpu trace\n");
 		fprintf(stderr, "             -debug     run with debugger\n");
+		fprintf(stderr, "             --cpu=legacy|musashi  select MPU backend\n");
 //		fprintf(stderr, "             -S  size   実行時スタックサイズ指定(単位KB、未実装)\n");
 		return( 1 );
 	}
@@ -390,6 +399,9 @@ Restart:
 	usp = ra [ 7 ];
 	ssp = ra [ 7 ];
 	superjsr_ret = 0;
+	cpu_backend_prepare();
+	if (trace_f)
+		fprintf(stderr, "MPUバックエンド=%s\n", cpu_backend_name());
 	if ( ini_info.trap_emulate == TRUE )
 		ret = exec_trap(&restart);
 	else
@@ -549,7 +561,7 @@ NextInstruction:
             continue;
         }
 		cpu_instruction_active = TRUE;
-        ecode = prog_exec();
+        ecode = cpu_backend_execute_one();
 		cpu_instruction_active = FALSE;
         if (ecode == TRUE)
         {
@@ -666,7 +678,7 @@ NextInstruction:
 			continue;
 		}
 		cpu_instruction_active = TRUE;
-		ecode = prog_exec();
+		ecode = cpu_backend_execute_one();
 		cpu_instruction_active = FALSE;
 		if (ecode == TRUE) {
 			running = FALSE;

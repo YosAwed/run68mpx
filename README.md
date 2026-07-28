@@ -58,7 +58,7 @@ VRAM、音源、物理ディスク、シリアル、マウスなど実機ハー�
 ### ビルドと品質確認
 
 - Apple Silicon／Intel macOSおよびLinuxを対象にしたCI構成へ更新
-- CTestによる17系統の回帰テストを追加し、CPU命令、例外、メモリ、ローダ、DOSファイル検索、CLI向けIOCSを検証
+- CTestによる18系統の回帰テストを追加し、CPU命令、例外、メモリ、ローダ、DOSファイル検索、CLI向けIOCS、Musashiバックエンドを検証
 - AddressSanitizer／UndefinedBehaviorSanitizerを有効にできる `RUN68_ENABLE_SANITIZERS` オプションを追加
 - コンパイラ警告を強化し、現在のバージョン表示を `0.10.0` に更新
 
@@ -116,6 +116,18 @@ ctest --test-dir build-sanitize --output-on-failure
 ./build/run68 program.x [引数...]
 ```
 
+MPUバックエンドは、従来コアが既定です。実験的なMusashiバックエンドは
+次のように選択できます。
+
+```sh
+./build/run68 --cpu=musashi program.x [引数...]
+```
+
+MusashiモードでもDOSCALL（`0xFFxx`）、FLOAT（`0xFExx`）、IOCSCALL
+（`TRAP #15`）はrun68mpxのホスト実装へ接続されます。現在は互換性比較を
+優先して1命令ごとに既存のレジスタ状態と同期するため、速度は今後の最適化
+対象です。
+
 標準出力と標準エラー出力のShift-JIS文字列は、対応環境ではUTF-8へ変換されます。
 
 ## ライセンス
@@ -123,3 +135,8 @@ ctest --test-dir build-sanitize --output-on-failure
 GNU General Public License version 2（GPL-2.0）です。詳細は [LICENCE](LICENCE) を参照してください。
 
 元プロジェクトと各移植・修正の作者、コントリビューターに感謝します。
+
+実験的MPUバックエンドには Karl Stenerud による
+[Musashi](https://github.com/kstenerud/Musashi) を使用しています。取り込んだ
+コミットとライセンスについては
+[`third_party/musashi/UPSTREAM.md`](third_party/musashi/UPSTREAM.md) を参照してください。

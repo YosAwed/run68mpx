@@ -47,6 +47,7 @@ set(SRC
     src/ansicolor-w32.c
     src/calc.c
     src/conditions.c
+    src/cpu_backend.c
     src/debugger.c
     src/datetime.c
     src/disassemble.c
@@ -83,6 +84,20 @@ endif()
 
 add_executable(run68 ${SRC})
 
+add_library(run68_musashi STATIC
+  third_party/musashi/m68kcpu.c
+  third_party/musashi/m68kops.c
+  third_party/musashi/softfloat/softfloat.c
+)
+target_include_directories(run68_musashi PUBLIC
+  src
+  third_party/musashi
+  third_party/musashi/softfloat
+)
+target_compile_definitions(run68_musashi PUBLIC
+  MUSASHI_CNF="musashi_config.h"
+)
+
 set(LIBS m) # math lib
 
 if(USE_ICONV)
@@ -91,11 +106,19 @@ if(USE_ICONV)
   endif()
 endif()
 
-target_link_libraries(run68 PUBLIC ${LIBS})
+target_link_libraries(run68 PUBLIC run68_musashi ${LIBS})
 
 include(CTest)
 
 if(BUILD_TESTING)
+  add_executable(run68_test_musashi_backend
+    tests/test_musashi_backend.c
+    src/cpu_backend.c
+  )
+  target_include_directories(run68_test_musashi_backend PRIVATE src)
+  target_link_libraries(run68_test_musashi_backend PRIVATE run68_musashi m)
+  add_test(NAME musashi_backend COMMAND run68_test_musashi_backend)
+
   add_executable(run68_test_mem
     tests/test_mem.c
     src/mem.c
@@ -238,8 +261,10 @@ if(RUN68_ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   set(RUN68_SANITIZER_FLAGS -fsanitize=address,undefined -fno-omit-frame-pointer)
   target_compile_options(run68 PRIVATE ${RUN68_SANITIZER_FLAGS})
   target_link_options(run68 PRIVATE ${RUN68_SANITIZER_FLAGS})
+  target_compile_options(run68_musashi PRIVATE ${RUN68_SANITIZER_FLAGS})
   if(BUILD_TESTING)
     foreach(test_target
+            run68_test_musashi_backend
             run68_test_mem
             run68_test_line8
             run68_test_compat
