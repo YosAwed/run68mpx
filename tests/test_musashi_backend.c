@@ -16,6 +16,7 @@ BOOL cpu_instruction_active;
 
 static int fline_calls;
 static int iocs_calls;
+static BOOL fline_should_finish;
 
 int prog_exec(void)
 {
@@ -27,7 +28,7 @@ int linef(char *opcode)
 	++fline_calls;
 	rd[0] = (UChar)opcode[1];
 	pc = run68_add32(pc, 2);
-	return FALSE;
+	return fline_should_finish;
 }
 
 int iocs_call(void)
@@ -120,6 +121,14 @@ int main(void)
 	expect_u32("iocs calls", 1, (ULong)iocs_calls);
 	expect_u32("iocs result", 0x12345678, (ULong)rd[1]);
 	expect_u32("iocs pc", 0x10008, (ULong)pc);
+	put_word(0x10008, 0xff4c);
+	fline_should_finish = TRUE;
+	if (cpu_backend_execute_one() != TRUE) {
+		fprintf(stderr, "terminating DOSCALL did not stop execution\n");
+		return 1;
+	}
+	expect_u32("terminating fline pc", 0x1000a, (ULong)pc);
+	fline_should_finish = FALSE;
 
 	/* An odd word operand must use Musashi's MC68000 address-error frame. */
 	put_word(0x10008, 0x3410); /* move.w (a0),d2 */

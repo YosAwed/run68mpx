@@ -110,6 +110,19 @@ cmake --build build-sanitize --parallel
 ctest --test-dir build-sanitize --output-on-failure
 ```
 
+実際のXファイル群を従来コアとMusashiで比較する場合:
+
+```sh
+python3 scripts/compare_cpu_backends.py \
+  --run68 build/run68 \
+  --samples /path/to/x-files \
+  --timeout 5
+```
+
+各Xファイルを短い一時パスへコピーして両バックエンドで実行し、終了状態、
+標準出力、標準エラーを比較します。入力待ちやハードウェア待ちのプログラムは
+指定秒数で打ち切ります。
+
 ## 使い方
 
 ```sh

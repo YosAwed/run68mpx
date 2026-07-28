@@ -80,7 +80,8 @@ static int musashi_trap_callback(int trap_number)
 
 	musashi_sync_from_core();
 	finished = iocs_call();
-	musashi_finished = musashi_finished || finished;
+	if (finished)
+		musashi_finished = TRUE;
 	musashi_sync_to_core();
 	return 1;
 }
@@ -106,7 +107,8 @@ static unsigned int musashi_read_16(unsigned int address, BOOL immediate)
 		musashi_sync_from_core();
 		pc = (Long)normalized;
 		finished = linef(prog_ptr + normalized);
-		musashi_finished = musashi_finished || finished;
+		if (finished)
+			musashi_finished = TRUE;
 		musashi_sync_to_core();
 		return 0x4e71u; /* Execute a harmless NOP in place of the HLE opcode. */
 	}
