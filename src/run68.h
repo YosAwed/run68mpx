@@ -68,7 +68,7 @@
  *
  */
 
-#define RUN68VERSION "0.09a+MacOS"
+#define RUN68VERSION "0.10.0"
 #if !defined(_RUN68_H_)
 #define _RUN68_H_
 
