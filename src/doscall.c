@@ -57,6 +57,7 @@
 #undef    MAIN
 
 #include "run68.h"
+#include "filesearch.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2531,72 +2532,17 @@ static Long Files( Long buf, Long name, short atr )
 	buf_ptr[30+22] = 0;
 
 	
-#else
-	char        *name_ptr;
-	char        *buf_ptr;
-	name_ptr = prog_ptr + name;
-	buf_ptr  = prog_ptr + buf;
-	
+#elif defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
 	{
-		FILE* fp = fopen( name_ptr, "rb" );
-		if (fp != NULL) {
-			fclose(fp);
-			
-			/* 予約領域をセット */
-			buf_ptr[0] = atr;  /* ファイルの属性 */
-			buf_ptr[1] = 0;    /* ドライブ番号(not used) */
-//			*((HANDLE*)&buf_ptr[2]) = handle; /* サーチハンドル */
-			{
-//				BOOL b = handle != INVALID_HANDLE_VALUE;
-			}
-			/* DATEとTIMEをセット */
-			{
-/*
-				SYSTEMTIME st;
-				unsigned short s;
-				FileTimeToSystemTime(&f_data.ftLastWriteTime, &st);
-				s = (st.wHour << 11) +
-				(st.wMinute << 5) +
-				st.wSecond / 2;
-				buf_ptr[22] = (s & 0xff00) >> 8;
-				buf_ptr[23] = s & 0xff;
-				s =((st.wYear - 1980) << 9) +
-				(st.wMonth << 5) +
-				st.wDay;
-				buf_ptr[24] = (s & 0xff00) >> 8;
-				buf_ptr[25] = s & 0xff;
-*/
-			}
-			// FILELENをセット
-			size_t size = 64;
-			buf_ptr[26] = (unsigned char)((size & 0xff000000) >> 24);
-			buf_ptr[27] = (unsigned char)((size & 0x00ff0000) >> 16);
-			buf_ptr[28] = (unsigned char)((size & 0x0000ff00) >> 8);
-			buf_ptr[29] = (unsigned char)(size & 0x000000ff);
-			/* PACKEDNAMEをセット */
-			strncpy(&buf_ptr[30], name_ptr, 22);
-			buf_ptr[30+22] = 0;
+		ULong address = (ULong)buf & 0x7fffffffu;
+		size_t buffer_size = ((ULong)buf & 0x80000000u) != 0 ? 141u : 53u;
 
-			return 0;
-		}
+		if (address + buffer_size > (ULong)mem_aloc)
+			return -14;
+		return run68_files_first((UChar *)prog_ptr + address, buffer_size,
+		                         prog_ptr + name, atr);
 	}
-
-	char *path = name_ptr;
-	DIR *dir;
-	struct dirent *dent;
-
-
-	
-	dir = opendir(path);
-	printf("opendir(%s)=%p\n", path, dir );
-	if (dir == NULL) {
-//		perror(path);
-	} else {
-		while ((dent = readdir(dir)) != NULL) {
-			printf("%s\n", dent->d_name);
-		}
-		closedir(dir);
-	}
+#else
 	printf("DOSCALL FILES:not defined yet %s %d\n", __FILE__, __LINE__ );
 #endif
 	return( 0 );
@@ -2726,7 +2672,14 @@ static Long Nfiles( Long buf )
 	buf_ptr[30+22] = 0;
 
 #elif defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
-	printf("DOSCALL NFILES:not defined yet %s %d\n", __FILE__, __LINE__ );
+	{
+		ULong address = (ULong)buf & 0x7fffffffu;
+		size_t buffer_size = ((ULong)buf & 0x80000000u) != 0 ? 141u : 53u;
+
+		if (address + buffer_size > (ULong)mem_aloc)
+			return -14;
+		return run68_files_next((UChar *)prog_ptr + address, buffer_size);
+	}
 #else
 	printf("DOSCALL NFILES:not defined yet %s %d\n", __FILE__, __LINE__ );
 #endif
