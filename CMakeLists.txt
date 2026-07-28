@@ -76,6 +76,10 @@ set(SRC
     src/run68.h
 )
 
+if(UNIX OR EMSCRIPTEN)
+  list(APPEND SRC src/filesearch.c)
+endif()
+
 add_executable(run68 ${SRC})
 
 set(LIBS m) # math lib
@@ -207,6 +211,15 @@ if(BUILD_TESTING)
   )
   target_include_directories(run68_test_exceptions PRIVATE src)
   add_test(NAME exception_frames COMMAND run68_test_exceptions)
+
+  if(UNIX OR EMSCRIPTEN)
+    add_executable(run68_test_filesearch
+      tests/test_filesearch.c
+      src/filesearch.c
+    )
+    target_include_directories(run68_test_filesearch PRIVATE src)
+    add_test(NAME dos_filesearch COMMAND run68_test_filesearch)
+  endif()
 endif()
 
 if(RUN68_ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
@@ -233,6 +246,10 @@ if(RUN68_ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
       target_compile_options(${test_target} PRIVATE ${RUN68_SANITIZER_FLAGS})
       target_link_options(${test_target} PRIVATE ${RUN68_SANITIZER_FLAGS})
     endforeach()
+    if(UNIX OR EMSCRIPTEN)
+      target_compile_options(run68_test_filesearch PRIVATE ${RUN68_SANITIZER_FLAGS})
+      target_link_options(run68_test_filesearch PRIVATE ${RUN68_SANITIZER_FLAGS})
+    endif()
   endif()
 endif()
 
