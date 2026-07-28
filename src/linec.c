@@ -55,7 +55,7 @@ int	linec( char *pc_ptr )
 
 	code1 = *(pc_ptr++);
 	code2 = *pc_ptr;
-	pc += 2;
+	pc = run68_add32(pc, 2);
 	if ( (code1 & 0x01) == 0 ) {
 		if ( (code2 & 0xC0) == 0xC0 )
 			return( Mulu( code1, code2 ) );
@@ -372,7 +372,7 @@ static	int	Mulu( char code1, char code2 )
 	}
 	src_data = (UShort)src_data_l;
 
-	ans = src_data * dst_data;
+	ans = (ULong)src_data * (ULong)dst_data;
 	rd [ dst_reg ] = ans;
 #ifdef	TRACE
 	printf( "trace: mulu     src=%u PC=%06lX\n", src_data, save_pc );

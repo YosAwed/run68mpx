@@ -49,7 +49,7 @@ int	linee( char *pc_ptr )
 
 	code1 = *(pc_ptr++);
 	code2 = *pc_ptr;
-	pc += 2;
+	pc = run68_add32(pc, 2);
 
 	if ( (code1 & 0x01) != 0 ) {
 		/* 左 */

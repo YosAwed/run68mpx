@@ -112,11 +112,11 @@ char *disassemble(Long addr, Long* next_addr)
         switch(code & 0x0f00)
         {
         case 0x0f00:
-            sprintf(mnemonic, "FCALL $%02X", code & 0xff);
+            snprintf(mnemonic, 64, "FCALL $%02X", code & 0xff);
             ptr = mnemonic;
             break;
         case 0x0e00:
-            sprintf(mnemonic, "FLOAT $%02X", code & 0xff);
+            snprintf(mnemonic, 64, "FLOAT $%02X", code & 0xff);
             ptr = mnemonic;
             break;
         }
@@ -130,7 +130,23 @@ char *disassemble(Long addr, Long* next_addr)
 }
 
 static BOOL effective_address(Long addr, short mode, short reg, char size,
-                              unsigned short mask, char *str, Long *next_addr);
+                              unsigned short mask, char *str, size_t str_size,
+                              Long *next_addr);
+
+static size_t remaining_text(const char *base, size_t capacity,
+                             const char *position)
+{
+    size_t used = (size_t)(position - base);
+    return used < capacity ? capacity - used : 0;
+}
+
+static void append_text(char *destination, size_t capacity,
+                        const char *source)
+{
+    size_t used = strnlen(destination, capacity);
+    if (used < capacity)
+        snprintf(destination + used, capacity - used, "%s", source);
+}
 
 static void fill_space(char *str, unsigned int n)
 {
@@ -154,33 +170,33 @@ static char *disa0(Long addr, unsigned short code, Long *next_addr, char *mnemon
     switch(code)
     {
     case 0x003c:  /* OR Immediate to CCR */
-        strcpy(mnemonic, "or");
+        snprintf(mnemonic, 64, "%s", "or");
         goto L0;
     case 0x023c:  /* AND Immediate to CCR */
-        strcpy(mnemonic, "and");
+        snprintf(mnemonic, 64, "%s", "and");
         goto L0;
     case 0x0a3c:  /* XOR Immediate to CCR */
-        strcpy(mnemonic, "xor");
+        snprintf(mnemonic, 64, "%s", "xor");
 L0:
         d1 = (unsigned short)prog_ptr_u[addr + 3];
         fill_space(mnemonic, 8);
         p = mnemonic + strlen(mnemonic);
-        sprintf(p, "#$%02x,ccr", d1);
+        snprintf(p, remaining_text(mnemonic, 64, p), "#$%02x,ccr", d1);
         *next_addr = addr + 4;
         return mnemonic;
     case 0x007c:  /* OR Immediate to SR */
-        strcpy(mnemonic, "or");
+        snprintf(mnemonic, 64, "%s", "or");
         goto L1;
     case 0x027c:  /* AND Immediate to SR */
-        strcpy(mnemonic, "and");
+        snprintf(mnemonic, 64, "%s", "and");
         goto L1;
     case 0x0a7c:  /* EOR Immediate to SR */
-        strcpy(mnemonic, "eor");
+        snprintf(mnemonic, 64, "%s", "eor");
 L1:
         d1 = ((unsigned short)prog_ptr_u[addr + 2] << 8) + (unsigned short)prog_ptr_u[addr + 3];
         fill_space(mnemonic, 8);
         p = mnemonic + strlen(mnemonic);
-        sprintf(p, "#$%04x,sr", d1);
+        snprintf(p, remaining_text(mnemonic, 64, p), "#$%04x,sr", d1);
         *next_addr = addr + 4;
         goto EndOfFunc;
     }
@@ -188,62 +204,62 @@ L1:
     switch(code & 0xff00)
     {
     case 0x0000:  /* OR Immediate */
-        strcpy(mnemonic, "or");
+        snprintf(mnemonic, 64, "%s", "or");
         goto L2;
     case 0x0200:  /* AND Immediate */
-        strcpy(mnemonic, "and");
+        snprintf(mnemonic, 64, "%s", "and");
         goto L2;
     case 0x0400:  /* SUB Immediate */
-        strcpy(mnemonic, "sub");
+        snprintf(mnemonic, 64, "%s", "sub");
         goto L2;
     case 0x0600:  /* ADD Immediate */
-        strcpy(mnemonic, "add");
+        snprintf(mnemonic, 64, "%s", "add");
         goto L2;
     case 0x0800:  /* Static Bit Operations */
         switch (code & 0x00c0)
         {
         case 0x0000:
-            strcpy(mnemonic, "btst");
+            snprintf(mnemonic, 64, "%s", "btst");
             break;
         case 0x0040:
-            strcpy(mnemonic, "bchg");
+            snprintf(mnemonic, 64, "%s", "bchg");
             break;
         case 0x0080:
-            strcpy(mnemonic, "bclr");
+            snprintf(mnemonic, 64, "%s", "bclr");
             break;
         case 0x00c0:
-            strcpy(mnemonic, "bset");
+            snprintf(mnemonic, 64, "%s", "bset");
         }
         *next_addr = addr + 4;
         d1 = ((unsigned short)prog_ptr_u[addr + 2] << 8) + (unsigned short)prog_ptr_u[addr + 3];
         size = ' ';  /* Data registers are Long only. Others are byte only. */
         fill_space(mnemonic, 8);
         p = mnemonic + strlen(mnemonic);
-        sprintf(p, "#%d,", d1);
+        snprintf(p, remaining_text(mnemonic, 64, p), "#%d,", d1);
         p = mnemonic + strlen(mnemonic);
         goto AddEA;
     case 0x0a00:  /* EOR Immediate */
-        strcpy(mnemonic, "eor");
+        snprintf(mnemonic, 64, "%s", "eor");
         goto L2;
     case 0x0c00:  /* CMP Immediate */
-        strcpy(mnemonic, "cmp");
+        snprintf(mnemonic, 64, "%s", "cmp");
 L2:
         switch (code & 0x00c0)
         {
         case 0x0000:
-            strcat(mnemonic, ".b");
+            append_text(mnemonic, 64, ".b");
             *next_addr = addr + 4;
             d1 = (unsigned short)prog_ptr_u[addr + 3];
             size = 'b';
             break;
         case 0x0040:
-            strcat(mnemonic, ".w");
+            append_text(mnemonic, 64, ".w");
             *next_addr = addr + 4;
             d1 = ((unsigned short)prog_ptr_u[addr + 2] << 8) + (unsigned short)prog_ptr_u[addr + 3];
             size = 'w';
             break;
         case 0x0080:
-            strcat(mnemonic, ".l");
+            append_text(mnemonic, 64, ".l");
             *next_addr = addr + 6;
             d1 = ((ULong)prog_ptr_u[addr + 2] << 24) + ((ULong)prog_ptr_u[addr + 3] << 16)
                + ((ULong)prog_ptr_u[addr + 4] << 8) + (ULong)prog_ptr_u[addr + 5];
@@ -258,13 +274,13 @@ L2:
         switch(size)
         {
         case 'b':
-            sprintf(p, "#$%02x,", d1);
+            snprintf(p, remaining_text(mnemonic, 64, p), "#$%02x,", d1);
             break;
         case 'w':
-            sprintf(p, "#$%04x,", d1);
+            snprintf(p, remaining_text(mnemonic, 64, p), "#$%04x,", d1);
             break;
         case 'l':
-            sprintf(p, "#$%08x,", d1);
+            snprintf(p, remaining_text(mnemonic, 64, p), "#$%08x,", d1);
             break;
         default:
             /* 命令デコードエラー */
@@ -279,51 +295,51 @@ L2:
         switch (code & 0x00c0)
         {
         case 0x0000:
-            strcat(mnemonic, "btst");
+            append_text(mnemonic, 64, "btst");
             break;
         case 0x0040:
-            strcat(mnemonic, "bchg");
+            append_text(mnemonic, 64, "bchg");
             break;
         case 0x0080:
-            strcpy(mnemonic, "bclr");
+            snprintf(mnemonic, 64, "%s", "bclr");
             break;
         case 0x00c0:
-            strcat(mnemonic, "bset");
+            append_text(mnemonic, 64, "bset");
         }
         fill_space(mnemonic, 8);
         p = mnemonic + strlen(mnemonic);
-        sprintf(p, "d%01d,", (code & 0x0e00) >> 9);
+        snprintf(p, remaining_text(mnemonic, 64, p), "d%01d,", (code & 0x0e00) >> 9);
         *next_addr = addr + 2;
         size = ' ';  /* Data registers are Long only. Others are byte only. */
         goto AddEA;
     } else if ((code & 0x0038) == 0x0008)
     {
         /* MOVEP命令 */
-        strcat(mnemonic, "movep");
+        append_text(mnemonic, 64, "movep");
         switch((code & 0x1c0) >> 6)
         {
         case 0x04:
-            strcat(mnemonic, ".w");
+            append_text(mnemonic, 64, ".w");
             goto L4;
         case 0x05:
-            strcat(mnemonic, ".l");
+            append_text(mnemonic, 64, ".l");
 L4:
             fill_space(mnemonic, 8);
             p = mnemonic + strlen(mnemonic);
             d1 = ((unsigned short)prog_ptr_u[addr + 2] << 8) + (unsigned short)prog_ptr_u[addr + 3];
-            sprintf(p, "%d(a%1d),d%1d", d1, code & 0x07, (code & 0x0e00) >> 9);
+            snprintf(p, remaining_text(mnemonic, 64, p), "%d(a%1d),d%1d", d1, code & 0x07, (code & 0x0e00) >> 9);
             *next_addr = addr + 4;
             goto EndOfFunc;
         case 0x06:
-            strcat(mnemonic, ".w");
+            append_text(mnemonic, 64, ".w");
             goto L5;
         case 0x07:
-            strcat(mnemonic, ".l");
+            append_text(mnemonic, 64, ".l");
 L5:
             fill_space(mnemonic, 8);
             p = mnemonic + strlen(mnemonic);
             d1 = ((unsigned short)prog_ptr_u[addr + 2] << 8) + (unsigned short)prog_ptr_u[addr + 3];
-            sprintf(p, "d%1d,%d(a%1d)", (code & 0x0e00) >> 9, d1, code & 0x07);
+            snprintf(p, remaining_text(mnemonic, 64, p), "d%1d,%d(a%1d)", (code & 0x0e00) >> 9, d1, code & 0x07);
             *next_addr = addr + 4;
             goto EndOfFunc;
         default:
@@ -337,7 +353,7 @@ L5:
 AddEA:
     p = &mnemonic[strlen(mnemonic)];
     /* 即値は有り得ないのでデータサイズには' 'を与える。*/
-    effective_address(*next_addr, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
+    effective_address(*next_addr, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
 EndOfFunc:
     return mnemonic;
 ErrorReturn:
@@ -358,7 +374,8 @@ ErrorReturn:
      BOOL   FALSEならエラー。エラー時もnext_addrは有効。
 */
 static BOOL effective_address(Long addr, short mode, short reg, char size,
-                              unsigned short mask, char *str, Long *next_addr)
+                              unsigned short mask, char *str, size_t str_size,
+                              Long *next_addr)
 {
     short disp, ext;
     unsigned short absw;
@@ -368,34 +385,34 @@ static BOOL effective_address(Long addr, short mode, short reg, char size,
     switch(mode)
     {
     case 0:  /* パターン0:データレジスタ直接 */
-        sprintf(str, "d%1d", reg);
+        snprintf(str, str_size, "d%1d", reg);
         *next_addr = addr;
         break;
     case 1:  /* パターン1:アドレスレジスタ直接 */
-        sprintf(str, "a%1d", reg);
+        snprintf(str, str_size, "a%1d", reg);
         *next_addr = addr;
         break;
     case 2:  /* パターン2:アドレスレジスタ間接 */
-        sprintf(str, "(a%1d)", reg);
+        snprintf(str, str_size, "(a%1d)", reg);
         *next_addr = addr;
         break;
     case 3:  /* パターン3:ポストインクリメント付きアドレスレジスタ間接 */
-        sprintf(str, "(a%1d)+", reg);
+        snprintf(str, str_size, "(a%1d)+", reg);
         *next_addr = addr;
         break;
     case 4:  /* パターン4:プリデクリメント付きアドレスレジスタ間接 */
-        sprintf(str, "-(a%1d)", reg);
+        snprintf(str, str_size, "-(a%1d)", reg);
         *next_addr = addr;
         break;
     case 5:  /* パターン5:ディスプレースメント付きアドレスレジスタ間接 */
         /* ディスプレースメントは符号付きのワード値である */
         disp = (short)((unsigned short)prog_ptr_u[addr] << 8) + (unsigned short)prog_ptr_u[addr + 1];
-        sprintf(str, "%d(a%1d)", disp, reg);
+        snprintf(str, str_size, "%d(a%1d)", disp, reg);
         *next_addr = addr + 2;
         break;
     case 6:  /* パターン6:インデックス付きアドレスレジスタ間接 */
         ext = (short)((unsigned short)prog_ptr_u[addr] << 8) + (unsigned short)prog_ptr_u[addr + 1];
-        sprintf(str, "%d(a%1d,%c%1d.%c)", (signed char)(ext & 0xff),
+        snprintf(str, str_size, "%d(a%1d,%c%1d.%c)", (signed char)(ext & 0xff),
                 reg, ext & 0x8000?'a':'d',
                 (ext & 0x7000) >> 12, ext & 0x0800?'l':'w');
         *next_addr = addr + 2;
@@ -406,7 +423,7 @@ static BOOL effective_address(Long addr, short mode, short reg, char size,
         case 0x0: /* パターン7:絶対ショートアドレス */
             absw = ((unsigned short)prog_ptr_u[addr] << 8)
                  + (unsigned short)prog_ptr_u[addr + 1];
-            sprintf(str, "$%06x", absw);
+            snprintf(str, str_size, "$%06x", absw);
             *next_addr = addr + 2;
             break;
         case 0x1: /* パターン8:絶対ロングアドレス */
@@ -414,18 +431,18 @@ static BOOL effective_address(Long addr, short mode, short reg, char size,
                  + ((ULong)prog_ptr_u[addr + 1] << 16)
                  + ((ULong)prog_ptr_u[addr + 2] << 8)
                  + (ULong)prog_ptr_u[addr + 3];
-            sprintf(str, "$%06x", absl);
+            snprintf(str, str_size, "$%06x", absl);
             *next_addr = addr + 4;
             break;
         case 0x2: /* パターン9:ディスプレースメント付きPC相対 */
             /* ディスプレースメントは符号付きのワード値である */
             disp = (short)((unsigned short)prog_ptr_u[addr] << 8) + (unsigned short)prog_ptr_u[addr + 1];
-            sprintf(str, "%d(pc)", disp);
+            snprintf(str, str_size, "%d(pc)", disp);
             *next_addr = addr + 2;
             break;
         case 0x3: /* パターン10:インデックス付きPC相対 */
             ext = (short)((unsigned short)prog_ptr_u[addr] << 8) + (unsigned short)prog_ptr_u[addr + 1];
-            sprintf(str, "%d(pc,%c%1d.%c)", (signed char)(ext & 0xff),
+            snprintf(str, str_size, "%d(pc,%c%1d.%c)", (signed char)(ext & 0xff),
                     ext & 0x8000?'a':'d',
                     (ext & 0x7000) >> 12, ext & 0x0800?'l':'w');
             *next_addr = addr + 2;
@@ -454,7 +471,7 @@ static BOOL effective_address(Long addr, short mode, short reg, char size,
                 /* ここには来ないはず。*/
                 goto ErrorReturn;
             }
-            sprintf(str, "#$%x", imm);
+            snprintf(str, str_size, "#$%x", imm);
             break;
         default: /* 存在しないアドレッシングモード */
             *next_addr = addr;
@@ -478,11 +495,11 @@ static char *disa1_2_3(Long addr, unsigned short code, Long *next_addr, char *mn
         switch(code & 0xf000)
         {
         case 0x2000:
-            strcat(mnemonic, "movea.l");
+            append_text(mnemonic, 64, "movea.l");
             size = 'l';
             break;
         case 0x3000:
-            strcat(mnemonic, "movea.w");
+            append_text(mnemonic, 64, "movea.w");
             size = 'w';
             break;
         }
@@ -491,29 +508,29 @@ static char *disa1_2_3(Long addr, unsigned short code, Long *next_addr, char *mn
         switch(code & 0xf000)
         {
         case 0x1000:
-            strcat(mnemonic, "move.b");
+            append_text(mnemonic, 64, "move.b");
             size = 'b';
             break;
         case 0x2000:
-            strcat(mnemonic, "move.l");
+            append_text(mnemonic, 64, "move.l");
             size = 'l';
             break;
         case 0x3000:
-            strcat(mnemonic, "move.w");
+            append_text(mnemonic, 64, "move.w");
             size = 'w';
             break;
         }
     }
     fill_space(mnemonic, 8);
-    b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, sstr, &addr);
+    b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, sstr, sizeof(sstr), &addr);
     if (b == FALSE)
         goto ErrorReturn;
-    b = effective_address(addr, (short)((code & 0x1c0) >> 6), (short)((code & 0xe00) >> 9), size, 0xfff, dstr, next_addr);
+    b = effective_address(addr, (short)((code & 0x1c0) >> 6), (short)((code & 0xe00) >> 9), size, 0xfff, dstr, sizeof(dstr), next_addr);
     if (b == FALSE)
         goto ErrorReturn;
-    strcat(mnemonic, sstr);
-    strcat(mnemonic, ",");
-    strcat(mnemonic, dstr);
+    append_text(mnemonic, 64, sstr);
+    append_text(mnemonic, 64, ",");
+    append_text(mnemonic, 64, dstr);
     return mnemonic;
 ErrorReturn:
     return NULL;
@@ -533,190 +550,190 @@ static char *disa4(Long addr, unsigned short code, Long *next_addr, char *mnemon
     switch(code)
     {
     case 0x4afc:
-        strcat(mnemonic,"illegal");
+        append_text(mnemonic, 64,"illegal");
         goto EndOfFunc;
     case 0x4e70:
-        strcat(mnemonic,"reset");
+        append_text(mnemonic, 64,"reset");
         goto EndOfFunc;
     case 0x4e71:
-        strcat(mnemonic,"nop");
+        append_text(mnemonic, 64,"nop");
         goto EndOfFunc;
     case 0x4e72:
-        strcat(mnemonic,"stop");
+        append_text(mnemonic, 64,"stop");
         goto EndOfFunc;
     case 0x4e73:
-        strcat(mnemonic,"rte");
+        append_text(mnemonic, 64,"rte");
         goto EndOfFunc;
     case 0x4e75:
-        strcat(mnemonic,"rts");
+        append_text(mnemonic, 64,"rts");
         goto EndOfFunc;
     case 0x4e76:
-        strcat(mnemonic,"trapv");
+        append_text(mnemonic, 64,"trapv");
         goto EndOfFunc;
     case 0x4e77:
-        strcat(mnemonic,"rtr");
+        append_text(mnemonic, 64,"rtr");
         goto EndOfFunc;
     }
     /* 次に、13ビット固定の命令を処理する */
     switch(code & 0xfff8)
     {
     case 0x4840:
-        sprintf(mnemonic, "swap    d%1d", code & 0x7);
+        snprintf(mnemonic, 64, "swap    d%1d", code & 0x7);
         goto EndOfFunc;
     case 0x4880:
-        sprintf(mnemonic, "ext.w   d%1d", code & 0x7);
+        snprintf(mnemonic, 64, "ext.w   d%1d", code & 0x7);
         goto EndOfFunc;
     case 0x48c0:
-        sprintf(mnemonic, "ext.l   d%1d", code & 0x7);
+        snprintf(mnemonic, 64, "ext.l   d%1d", code & 0x7);
         goto EndOfFunc;
     case 0x4e50:
         disp = (signed short)(((unsigned short)prog_ptr_u[addr + 2] << 8)
                     + (unsigned short)prog_ptr_u[addr + 3]);
-        sprintf(mnemonic, "link    a%1d,#%d", code & 0x7, disp);
+        snprintf(mnemonic, 64, "link    a%1d,#%d", code & 0x7, disp);
         *next_addr += 2;
         goto EndOfFunc;
     case 0x4e58:
-        sprintf(mnemonic, "unlk    a%1d", code & 0x7);
+        snprintf(mnemonic, 64, "unlk    a%1d", code & 0x7);
         goto EndOfFunc;
     case 0x4e60:
-        sprintf(mnemonic, "move    a%1d,usp", code & 0x7);
+        snprintf(mnemonic, 64, "move    a%1d,usp", code & 0x7);
         goto EndOfFunc;
     case 0x4e68:
-        sprintf(mnemonic, "move    usp,a%1d", code & 0x7);
+        snprintf(mnemonic, 64, "move    usp,a%1d", code & 0x7);
         goto EndOfFunc;
     }
     /* 次に、12ビット固定の命令を処理する */
     switch(code & 0xfff0)
     {
     case 0x4e40:
-        sprintf(mnemonic, "trap    #%d", code & 0xf);
+        snprintf(mnemonic, 64, "trap    #%d", code & 0xf);
         goto EndOfFunc;
     }
     /* 次に、10ビット固定の命令を処理する */
     switch(code & 0xffc0)
     {
     case 0x40c0:
-        strcat(mnemonic, "move.w  sr,");
+        append_text(mnemonic, 64, "move.w  sr,");
         size = 'w';
         goto AddEA;
     case 0x44c0:
-        strcat(mnemonic, "move.w  ");
+        append_text(mnemonic, 64, "move.w  ");
         size = 'w';
         p = mnemonic + strlen(mnemonic);
-        b = effective_address(addr+2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
-        strcat(mnemonic, ",ccr");
+        b = effective_address(addr+2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
+        append_text(mnemonic, 64, ",ccr");
         if (b == FALSE)
             goto ErrorReturn;
         goto EndOfFunc;
     case 0x46c0:
-        strcat(mnemonic, "move.w  ");
+        append_text(mnemonic, 64, "move.w  ");
         size = 'w';
         p = mnemonic + strlen(mnemonic);
-        b = effective_address(addr+2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
-        strcat(mnemonic, ",sr");
+        b = effective_address(addr+2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
+        append_text(mnemonic, 64, ",sr");
         if (b == FALSE)
             goto ErrorReturn;
         goto EndOfFunc;
     case 0x4800:
-        strcat(mnemonic, "nbcd    ");
+        append_text(mnemonic, 64, "nbcd    ");
         size = 'l';
         goto AddEA;
     case 0x4840:
-        strcat(mnemonic, "pea.l   ");
+        append_text(mnemonic, 64, "pea.l   ");
         size = 'l';
         goto AddEA;
     case 0x4ac0:
-        strcat(mnemonic, "tas.b   ");
+        append_text(mnemonic, 64, "tas.b   ");
         size = 'b';
         goto AddEA;
     case 0x4e80:
-        strcat(mnemonic, "jsr     ");
+        append_text(mnemonic, 64, "jsr     ");
         size = 'l';
         goto AddEA;
     case 0x4ec0:
-        strcat(mnemonic, "jmp     ");
+        append_text(mnemonic, 64, "jmp     ");
         size = 'l';
         goto AddEA;
     case 0x4000:
-        strcat(mnemonic, "negx.b  ");
+        append_text(mnemonic, 64, "negx.b  ");
         size = 'b';
         goto AddEA;
     case 0x4040:
-        strcat(mnemonic, "negx.w  ");
+        append_text(mnemonic, 64, "negx.w  ");
         size = 'w';
         goto AddEA;
     case 0x4080:
-        strcat(mnemonic, "negx.l  ");
+        append_text(mnemonic, 64, "negx.l  ");
         size = 'l';
         goto AddEA;
     case 0x4200:
-        strcat(mnemonic, "clr.b   ");
+        append_text(mnemonic, 64, "clr.b   ");
         size = 'b';
         goto AddEA;
     case 0x4240:
-        strcat(mnemonic, "clr.w   ");
+        append_text(mnemonic, 64, "clr.w   ");
         size = 'w';
         goto AddEA;
     case 0x4280:
-        strcat(mnemonic, "clr.l   ");
+        append_text(mnemonic, 64, "clr.l   ");
         size = 'l';
         goto AddEA;
     case 0x4400:
-        strcat(mnemonic, "neg.b   ");
+        append_text(mnemonic, 64, "neg.b   ");
         size = 'b';
         goto AddEA;
     case 0x4440:
-        strcat(mnemonic, "neg.w   ");
+        append_text(mnemonic, 64, "neg.w   ");
         size = 'w';
         goto AddEA;
     case 0x4480:
-        strcat(mnemonic, "neg.l   ");
+        append_text(mnemonic, 64, "neg.l   ");
         size = 'l';
         goto AddEA;
     case 0x4600:
-        strcat(mnemonic, "not.b   ");
+        append_text(mnemonic, 64, "not.b   ");
         size = 'b';
         goto AddEA;
     case 0x4640:
-        strcat(mnemonic, "not.w   ");
+        append_text(mnemonic, 64, "not.w   ");
         size = 'w';
         goto AddEA;
     case 0x4680:
-        strcat(mnemonic, "not.l   ");
+        append_text(mnemonic, 64, "not.l   ");
         size = 'l';
         goto AddEA;
     case 0x4a00:
-        strcat(mnemonic, "tst.b   ");
+        append_text(mnemonic, 64, "tst.b   ");
         size = 'b';
         goto AddEA;
     case 0x4a40:
-        strcat(mnemonic, "tst.w   ");
+        append_text(mnemonic, 64, "tst.w   ");
         size = 'w';
         goto AddEA;
     case 0x4a80:
-        strcat(mnemonic, "tst.l   ");
+        append_text(mnemonic, 64, "tst.l   ");
         size = 'l';
         goto AddEA;
     case 0x4c80: /* MOVEM */
-        strcat(mnemonic, "movem.w ");
+        append_text(mnemonic, 64, "movem.w ");
         size = 'w';
         goto L0;
     case 0x4cc0:
-        strcat(mnemonic, "movem.l ");
+        append_text(mnemonic, 64, "movem.l ");
         size = 'l';
 L0:
         p = mnemonic + strlen(mnemonic);
-        b = effective_address(addr+4, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
-        strcat(mnemonic, ",");
+        b = effective_address(addr+4, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
+        append_text(mnemonic, 64, ",");
         if (b == FALSE)
             goto ErrorReturn;
         goto L1;
     case 0x4880:
-        strcat(mnemonic, "movem.w ");
+        append_text(mnemonic, 64, "movem.w ");
         size = 'w';
         goto L1;
     case 0x48c0:
-        strcat(mnemonic, "movem.l ");
+        append_text(mnemonic, 64, "movem.l ");
         size = 'l';
 L1:
         /* MOVEM命令のレジスタリストをAutomatonで文字列に変換する */
@@ -744,8 +761,8 @@ L1:
                 } else
                 {
                     stat = 1;
-                    sprintf(reg, "d%1d", i);
-                    strcat(mnemonic, reg);
+                    snprintf(reg, sizeof(reg), "d%1d", i);
+                    append_text(mnemonic, 64, reg);
                 }
                 break;
             case 1:
@@ -761,8 +778,8 @@ L1:
                 if (e == 0)
                 {
                     stat = 3;
-                    sprintf(reg, "-d%1d", i - 1);
-                    strcat(mnemonic, reg);
+                    snprintf(reg, sizeof(reg), "-d%1d", i - 1);
+                    append_text(mnemonic, 64, reg);
                 } else
                 {
                     /* nothing */
@@ -775,16 +792,16 @@ L1:
                 } else
                 {
                     stat = 1;
-                    sprintf(reg, "/d%1d", i);
-                    strcat(mnemonic, reg);
+                    snprintf(reg, sizeof(reg), "/d%1d", i);
+                    append_text(mnemonic, 64, reg);
                 }
                 break;
             }
         }
         if (stat == 2)
         {
-            sprintf(reg, "-d%1d", i - 1);
-            strcat(mnemonic, reg);
+            snprintf(reg, sizeof(reg), "-d%1d", i - 1);
+            append_text(mnemonic, 64, reg);
         }
         dstat = stat;
         stat = 0;
@@ -809,10 +826,10 @@ L1:
                 } else
                 {
                     stat = 1;
-                    sprintf(reg, "a%1d", i - 8);
+                    snprintf(reg, sizeof(reg), "a%1d", i - 8);
                     if (dstat != 0)
-                        strcat(mnemonic, "/");
-                    strcat(mnemonic, reg);
+                        append_text(mnemonic, 64, "/");
+                    append_text(mnemonic, 64, reg);
                 }
                 break;
             case 1:
@@ -828,8 +845,8 @@ L1:
                 if (e == 0)
                 {
                     stat = 3;
-                    sprintf(reg, "-a%1d", i - 9);
-                    strcat(mnemonic, reg);
+                    snprintf(reg, sizeof(reg), "-a%1d", i - 9);
+                    append_text(mnemonic, 64, reg);
                 } else
                 {
                     /* nothing */
@@ -842,22 +859,22 @@ L1:
                 } else
                 {
                     stat = 1;
-                    sprintf(reg, "/a%1d", i - 8);
-                    strcat(mnemonic, reg);
+                    snprintf(reg, sizeof(reg), "/a%1d", i - 8);
+                    append_text(mnemonic, 64, reg);
                 }
                 break;
             }
         }
         if (stat == 2)
         {
-            sprintf(reg, "-a%1d", i - 9);
-            strcat(mnemonic, reg);
+            snprintf(reg, sizeof(reg), "-a%1d", i - 9);
+            append_text(mnemonic, 64, reg);
         }
         if ((code & 0x0400) == 0)
         {
-            strcat(mnemonic, ",");
+            append_text(mnemonic, 64, ",");
             p = mnemonic + strlen(mnemonic);
-            b = effective_address(addr + 4, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
+            b = effective_address(addr + 4, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
             if (b == FALSE)
                 goto ErrorReturn;
         }
@@ -867,33 +884,33 @@ L1:
     switch(code & 0xf1c0)
     {
     case 0x4180:
-        strcat(mnemonic, "chk.w   ");
+        append_text(mnemonic, 64, "chk.w   ");
         size = 'w';
         p = mnemonic + strlen(mnemonic);
-        b = effective_address(addr+2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
+        b = effective_address(addr+2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
         p = mnemonic + strlen(mnemonic);
         if (b == FALSE)
             goto ErrorReturn;
-        sprintf(p, ",d%1d", (code & 0xe00) >> 9);
+        snprintf(p, remaining_text(mnemonic, 64, p), ",d%1d", (code & 0xe00) >> 9);
         goto EndOfFunc;
     case 0x41c0:
-        strcat(mnemonic, "lea.l   ");
+        append_text(mnemonic, 64, "lea.l   ");
         size = 'l';
         p = mnemonic + strlen(mnemonic);
-        b = effective_address(addr+2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
+        b = effective_address(addr+2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
         p = mnemonic + strlen(mnemonic);
         if (b == FALSE)
             goto ErrorReturn;
-        sprintf(p, ",a%1d", (code & 0xe00) >> 9);
+        snprintf(p, remaining_text(mnemonic, 64, p), ",a%1d", (code & 0xe00) >> 9);
         goto EndOfFunc;
     default:
         goto ErrorReturn;
     }
-    strcat(mnemonic, "No instruction found.");
+    append_text(mnemonic, 64, "No instruction found.");
     goto ErrorReturn;
 AddEA:
     p = mnemonic + strlen(mnemonic);
-    b = effective_address(addr+2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
+    b = effective_address(addr+2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
     if (b == FALSE)
         goto ErrorReturn;
 EndOfFunc:
@@ -912,62 +929,62 @@ static char *disa5(Long addr, unsigned short code, Long *next_addr, char *mnemon
     if ((code & 0xf8) == 0xc8)
     {
         /* DBcc */
-        strcat(mnemonic, "db");
+        append_text(mnemonic, 64, "db");
         goto L0;
     } else if ((code & 0xc0) == 0xc0)
     {
         /* Scc */
-        strcat(mnemonic, "s");
+        append_text(mnemonic, 64, "s");
 L0:
         switch(code & 0xf00)
         {
         case 0x000:
-            strcat(mnemonic, "t");
+            append_text(mnemonic, 64, "t");
             break;
         case 0x100:
-            strcat(mnemonic, "f");
+            append_text(mnemonic, 64, "f");
             break;
         case 0x200:
-            strcat(mnemonic, "hi");
+            append_text(mnemonic, 64, "hi");
             break;
         case 0x300:
-            strcat(mnemonic, "ls");
+            append_text(mnemonic, 64, "ls");
             break;
         case 0x400:
-            strcat(mnemonic, "cc");
+            append_text(mnemonic, 64, "cc");
             break;
         case 0x500:
-            strcat(mnemonic, "cl");
+            append_text(mnemonic, 64, "cl");
             break;
         case 0x600:
-            strcat(mnemonic, "ne");
+            append_text(mnemonic, 64, "ne");
             break;
         case 0x700:
-            strcat(mnemonic, "eq");
+            append_text(mnemonic, 64, "eq");
             break;
         case 0x800:
-            strcat(mnemonic, "vc");
+            append_text(mnemonic, 64, "vc");
             break;
         case 0x900:
-            strcat(mnemonic, "vs");
+            append_text(mnemonic, 64, "vs");
             break;
         case 0xa00:
-            strcat(mnemonic, "pl");
+            append_text(mnemonic, 64, "pl");
             break;
         case 0xb00:
-            strcat(mnemonic, "mi");
+            append_text(mnemonic, 64, "mi");
             break;
         case 0xc00:
-            strcat(mnemonic, "ge");
+            append_text(mnemonic, 64, "ge");
             break;
         case 0xd00:
-            strcat(mnemonic, "lt");
+            append_text(mnemonic, 64, "lt");
             break;
         case 0xe00:
-            strcat(mnemonic, "gt");
+            append_text(mnemonic, 64, "gt");
             break;
         case 0xf00:
-            strcat(mnemonic, "le");
+            append_text(mnemonic, 64, "le");
             break;
         }
         fill_space(mnemonic, 8);
@@ -976,19 +993,19 @@ L0:
         /* DBcc */
         offset = (signed short)((prog_ptr_u[addr + 2] << 8) + prog_ptr_u[addr + 3]);
         p = mnemonic + strlen(mnemonic);
-        sprintf(p, "d%1d,$%06x", code & 7, addr + 2 + offset);
+        snprintf(p, remaining_text(mnemonic, 64, p), "d%1d,$%06x", code & 7, addr + 2 + offset);
         *next_addr = addr + 4;
         goto EndOfFunc;
     } else if (code & 0x100)
     {
         /* SUBQ */
-        strcat(mnemonic, "subq.");
+        append_text(mnemonic, 64, "subq.");
         goto L1;
     } else
     {
         int v;
         /* ADDQ */
-        strcat(mnemonic, "addq.");
+        append_text(mnemonic, 64, "addq.");
 L1:
         p = mnemonic + strlen(mnemonic);
         switch(code & 0xc0)
@@ -1007,11 +1024,11 @@ L1:
         fill_space(mnemonic, 8);
         p = mnemonic + strlen(mnemonic);
         v = (code & 0xe00) >> 9;
-        sprintf(p, "#%d,", v==0 ? 8:v);
+        snprintf(p, remaining_text(mnemonic, 64, p), "#%d,", v==0 ? 8:v);
     }
 AddEA:
     p = mnemonic + strlen(mnemonic);
-    b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
+    b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
     if (b == FALSE)
         goto ErrorReturn;
 EndOfFunc:
@@ -1028,52 +1045,52 @@ static char *disa6(Long addr, unsigned short code, Long *next_addr, char *mnemon
     switch(code & 0xf00)
     {
     case 0x000:
-        strcat(mnemonic, "bra");
+        append_text(mnemonic, 64, "bra");
         break;
     case 0x100:
-        strcat(mnemonic, "bsr");
+        append_text(mnemonic, 64, "bsr");
         break;
     case 0x200:
-        strcat(mnemonic, "bhi");
+        append_text(mnemonic, 64, "bhi");
         break;
     case 0x300:
-        strcat(mnemonic, "bls");
+        append_text(mnemonic, 64, "bls");
         break;
     case 0x400:
-        strcat(mnemonic, "bcc");
+        append_text(mnemonic, 64, "bcc");
         break;
     case 0x500:
-        strcat(mnemonic, "bcs");
+        append_text(mnemonic, 64, "bcs");
         break;
     case 0x600:
-        strcat(mnemonic, "bne");
+        append_text(mnemonic, 64, "bne");
         break;
     case 0x700:
-        strcat(mnemonic, "beq");
+        append_text(mnemonic, 64, "beq");
         break;
     case 0x800:
-        strcat(mnemonic, "bvc");
+        append_text(mnemonic, 64, "bvc");
         break;
     case 0x900:
-        strcat(mnemonic, "bvs");
+        append_text(mnemonic, 64, "bvs");
         break;
     case 0xa00:
-        strcat(mnemonic, "bpl");
+        append_text(mnemonic, 64, "bpl");
         break;
     case 0xb00:
-        strcat(mnemonic, "bmi");
+        append_text(mnemonic, 64, "bmi");
         break;
     case 0xc00:
-        strcat(mnemonic, "bge");
+        append_text(mnemonic, 64, "bge");
         break;
     case 0xd00:
-        strcat(mnemonic, "blt");
+        append_text(mnemonic, 64, "blt");
         break;
     case 0xe00:
-        strcat(mnemonic, "bgt");
+        append_text(mnemonic, 64, "bgt");
         break;
     case 0xf00:
-        strcat(mnemonic, "ble");
+        append_text(mnemonic, 64, "ble");
         break;
     default:
         goto ErrorReturn;
@@ -1082,18 +1099,18 @@ static char *disa6(Long addr, unsigned short code, Long *next_addr, char *mnemon
     {
         jaddr = addr + 2 + prog_ptr[addr + 1];
         (*next_addr) = addr + 2;
-        strcat(mnemonic, ".b");
+        append_text(mnemonic, 64, ".b");
     } else
     {
         jaddr = addr + 2 +
             (short)(((unsigned short)prog_ptr[addr + 2] << 8) +
                      (unsigned short)prog_ptr[addr + 3]);
         (*next_addr) = addr + 4;
-        strcat(mnemonic, ".w");
+        append_text(mnemonic, 64, ".w");
     }
     fill_space(mnemonic, 8);
     p = mnemonic + strlen(mnemonic);
-    sprintf(p, "$%06X", jaddr);
+    snprintf(p, remaining_text(mnemonic, 64, p), "$%06X", jaddr);
     return mnemonic;
 ErrorReturn:
     return NULL;
@@ -1107,7 +1124,7 @@ static char *disa7(Long addr, unsigned short code, Long *next_addr, char *mnemon
         return NULL;
     } else
     {
-        sprintf(mnemonic, "moveq.l #%d,d%1d", (Long)((signed char)(code & 0xff)),
+        snprintf(mnemonic, 64, "moveq.l #%d,d%1d", (Long)((signed char)(code & 0xff)),
                 (code & 0x0e00) >> 9);
     }
     *next_addr = addr + 2;
@@ -1124,28 +1141,28 @@ static char *disa8(Long addr, unsigned short code, Long *next_addr, char *mnemon
         /* SBCD */
         if (code & 0x8)
         {
-            sprintf(mnemonic, "sbcd    (a%1d)+,(a%1d)+", (code & 0x7), (code & 0x0e00) >> 9);
+            snprintf(mnemonic, 64, "sbcd    (a%1d)+,(a%1d)+", (code & 0x7), (code & 0x0e00) >> 9);
         } else
         {
-            sprintf(mnemonic, "sbcd    d%1d,d%1d", (code & 0x7), (code & 0x0e00) >> 9);
+            snprintf(mnemonic, 64, "sbcd    d%1d,d%1d", (code & 0x7), (code & 0x0e00) >> 9);
         }
         addr += 2;
         goto EndOfFunc;
     } else if ((code & 0x1c0) == 0x1c0)
     {
         /* DIVS */
-        sprintf(mnemonic, "divs    d%1d,", (code & 0x0e00) >> 9);
+        snprintf(mnemonic, 64, "divs    d%1d,", (code & 0x0e00) >> 9);
         size = 'w';
         goto L0;
     } else if ((code & 0x1c0) == 0x0c0)
     {
         /* DIVU */
-        sprintf(mnemonic, "divu    d%1d,", (code & 0x0e00) >> 9);
+        snprintf(mnemonic, 64, "divu    d%1d,", (code & 0x0e00) >> 9);
         size = 'w';
 L0:
         fill_space(mnemonic, 8);
         p = mnemonic + strlen(mnemonic);
-        b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, &addr);
+        b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), &addr);
         if (b == FALSE)
             goto ErrorReturn;
         goto EndOfFunc;
@@ -1158,41 +1175,41 @@ L0:
         {
         case 0:
             size = 'b';
-            strcat(mnemonic, "or.b");
+            append_text(mnemonic, 64, "or.b");
             goto L1;
         case 1:
             size = 'w';
-            strcat(mnemonic, "or.w");
+            append_text(mnemonic, 64, "or.w");
             goto L1;
         case 2:
             size = 'l';
-            strcat(mnemonic, "or.l");
+            append_text(mnemonic, 64, "or.l");
 L1:
-            b = effective_address(addr, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, ea, &addr);
+            b = effective_address(addr, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, ea, sizeof(ea), &addr);
             if (b == FALSE)
                 goto ErrorReturn;
             fill_space(mnemonic, 8);
             p = mnemonic + strlen(mnemonic);
-            sprintf(p, "%s,d%1d", ea, (code & 0xe00) >> 9);
+            snprintf(p, remaining_text(mnemonic, 64, p), "%s,d%1d", ea, (code & 0xe00) >> 9);
             break;
         case 4:
             size = 'b';
-            strcat(mnemonic, "or.b");
+            append_text(mnemonic, 64, "or.b");
             goto L2;
         case 5:
             size = 'w';
-            strcat(mnemonic, "or.w");
+            append_text(mnemonic, 64, "or.w");
             goto L2;
         case 6:
             size = 'l';
-            strcat(mnemonic, "or.l");
+            append_text(mnemonic, 64, "or.l");
 L2:
-            b = effective_address(addr, (short)((code & 0x38) >> 3), (short)(code & 0x7), ' ', 0xfff, ea, &addr);
+            b = effective_address(addr, (short)((code & 0x38) >> 3), (short)(code & 0x7), ' ', 0xfff, ea, sizeof(ea), &addr);
             if (b == FALSE)
                 goto ErrorReturn;
             fill_space(mnemonic, 8);
             p = mnemonic + strlen(mnemonic);
-            sprintf(p, "d%1d,%s", (code & 0xe00) >> 9, ea);
+            snprintf(p, remaining_text(mnemonic, 64, p), "d%1d,%s", (code & 0xe00) >> 9, ea);
             break;
         default:
             goto ErrorReturn;
@@ -1213,12 +1230,12 @@ static char *disa9_d(Long addr, unsigned short code, Long *next_addr, char *mnem
     if ((code & 0xf130) == 0x9100 && ((code & 0xc0) >> 6) <= 2)
     {
         /* SUBX */
-        strcat(mnemonic, "subx");
+        append_text(mnemonic, 64, "subx");
         goto L0;
     } else if ((code & 0xf130) == 0xd100 && ((code & 0xc0) >> 6) <= 2)
     {
         /* ADDX */
-        strcat(mnemonic, "addx");
+        append_text(mnemonic, 64, "addx");
 L0:
         switch((code & 0xc0) >> 6)
         {
@@ -1237,65 +1254,65 @@ L0:
         p = mnemonic + strlen(mnemonic);
         if (code & 0x8)
         {
-            sprintf(p, ".%c  -(a%1d),-(a%1d)", size, (code & 0x7), (code & 0xe00) >> 9);
+            snprintf(p, remaining_text(mnemonic, 64, p), ".%c  -(a%1d),-(a%1d)", size, (code & 0x7), (code & 0xe00) >> 9);
         } else
         {
-            sprintf(p, ".%c  d%1d,d%1d", size, (code & 0x7), (code & 0xe00) >> 9);
+            snprintf(p, remaining_text(mnemonic, 64, p), ".%c  d%1d,d%1d", size, (code & 0x7), (code & 0xe00) >> 9);
         }
         goto EndOfFunc;
     } else if ((code & 0xf000) == 0x9000)
     {
         /* SUB or SUBA*/
-        strcat(mnemonic, "sub");
+        append_text(mnemonic, 64, "sub");
         goto L1;
     } else
     {
         /* ADD or ADDA */
-        strcat(mnemonic, "add");
+        append_text(mnemonic, 64, "add");
 L1:
         /* ADD & SUB共通処理 */
         switch((code & 0x1c0) >> 6)
         {
         case 0:
-            strcat(mnemonic, ".b");
+            append_text(mnemonic, 64, ".b");
             size = 'b';
             goto L2;
         case 3:
-            strcat(mnemonic, "a");
+            append_text(mnemonic, 64, "a");
             reg = 'a';
         case 1:
-            strcat(mnemonic, ".w");
+            append_text(mnemonic, 64, ".w");
             size = 'w';
             goto L2;
         case 7:
-            strcat(mnemonic, "a");
+            append_text(mnemonic, 64, "a");
             reg = 'a';
         case 2:
-            strcat(mnemonic, ".l");
+            append_text(mnemonic, 64, ".l");
             size = 'l';
 L2:
             fill_space(mnemonic, 8);
             p = mnemonic + strlen(mnemonic);
-            b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
+            b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
             if (b == FALSE)
                 goto ErrorReturn;
             p = mnemonic + strlen(mnemonic);
-            sprintf(p, ",%c%1d", reg, (code & 0xe00) >> 9);
+            snprintf(p, remaining_text(mnemonic, 64, p), ",%c%1d", reg, (code & 0xe00) >> 9);
             break;
         case 4:
-            strcat(mnemonic, ".b");
+            append_text(mnemonic, 64, ".b");
             goto L3;
         case 5:
-            strcat(mnemonic, ".w");
+            append_text(mnemonic, 64, ".w");
             goto L3;
         case 6:
-            strcat(mnemonic, ".l");
+            append_text(mnemonic, 64, ".l");
 L3:
             fill_space(mnemonic, 8);
             p = mnemonic + strlen(mnemonic);
-            sprintf(p, "d%1d,", (code & 0xe00) >> 9);
+            snprintf(p, remaining_text(mnemonic, 64, p), "d%1d,", (code & 0xe00) >> 9);
             p = mnemonic + strlen(mnemonic);
-            b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), ' ', 0xfff, p, next_addr);
+            b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), ' ', 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
             if (b == FALSE)
                 goto ErrorReturn;
             break;
@@ -1318,7 +1335,7 @@ static char *disab(Long addr, unsigned short code, Long *next_addr, char *mnemon
     if ((code & 0xf138) == 0xb108 && ((code & 0xc0) >> 6) <= 2)
     {
         /* CMPM */
-        strcat(mnemonic, "cmpm");
+        append_text(mnemonic, 64, "cmpm");
         switch((code & 0xc0) >> 6)
         {
         case 0:
@@ -1333,7 +1350,7 @@ static char *disab(Long addr, unsigned short code, Long *next_addr, char *mnemon
         default:
             goto ErrorReturn;
         }
-        sprintf(mnemonic, "cmpm.%c  (a%1d)+,(a%1d)+", size, (code & 0x3), (code & 0xe00) >> 9);
+        snprintf(mnemonic, 64, "cmpm.%c  (a%1d)+,(a%1d)+", size, (code & 0x3), (code & 0xe00) >> 9);
         *next_addr = addr + 2;
         goto EndOfFunc;
     }
@@ -1362,20 +1379,20 @@ static char *disab(Long addr, unsigned short code, Long *next_addr, char *mnemon
     if ((code & 0xf100) == 0xb100 && reg != 'a')
     {
         /* EOR */
-        sprintf(mnemonic, "eor.%c   d%1d,", size, (code & 0xe00) >> 9);
+        snprintf(mnemonic, 64, "eor.%c   d%1d,", size, (code & 0xe00) >> 9);
     } else
     {
         /* CMP */
         if (reg == 'd')
         {
-            sprintf(mnemonic, "cmp.%c   ", size);
+            snprintf(mnemonic, 64, "cmp.%c   ", size);
         } else
         {
-            sprintf(mnemonic, "cmpa.%c  ", size);
+            snprintf(mnemonic, 64, "cmpa.%c  ", size);
         }
     }
     p = mnemonic + strlen(mnemonic);
-    b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
+    b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
     if (b == FALSE)
         goto ErrorReturn;
     if ((code & 0xf100) == 0xb100 && reg != 'a')
@@ -1384,7 +1401,7 @@ static char *disab(Long addr, unsigned short code, Long *next_addr, char *mnemon
         goto EndOfFunc;
     }
     p = mnemonic + strlen(mnemonic);
-    sprintf(p, ",%c%1d", reg, (code & 0xe00) >> 9);
+    snprintf(p, remaining_text(mnemonic, 64, p), ",%c%1d", reg, (code & 0xe00) >> 9);
 EndOfFunc:
     return mnemonic;
 ErrorReturn:
@@ -1401,23 +1418,23 @@ static char *disac(Long addr, unsigned short code, Long *next_addr, char *mnemon
     switch(code & 0xf1f8)
     {
     case 0xc100:
-        sprintf(mnemonic, "abcd.b  d%1d,d%1d", (code & 0x7), (code & 0x38) >> 9);
+        snprintf(mnemonic, 64, "abcd.b  d%1d,d%1d", (code & 0x7), (code & 0x38) >> 9);
         *next_addr = addr + 2;
         goto EndOfFunc;
     case 0xc108:
-        sprintf(mnemonic, "abcd.b  -(a%1d),-(a%1d)", (code & 0x7), (code & 0x38) >> 9);
+        snprintf(mnemonic, 64, "abcd.b  -(a%1d),-(a%1d)", (code & 0x7), (code & 0x38) >> 9);
         *next_addr = addr + 2;
         goto EndOfFunc;
     case 0xc140:
-        sprintf(mnemonic, "exg.l  d%1d,d%1d", (code & 0x38) >> 9, (code & 0x7));
+        snprintf(mnemonic, 64, "exg.l  d%1d,d%1d", (code & 0x38) >> 9, (code & 0x7));
         *next_addr = addr + 2;
         goto EndOfFunc;
     case 0xc141:
-        sprintf(mnemonic, "exg.l  a%1d,a%1d", (code & 0x38) >> 9, (code & 0x7));
+        snprintf(mnemonic, 64, "exg.l  a%1d,a%1d", (code & 0x38) >> 9, (code & 0x7));
         *next_addr = addr + 2;
         goto EndOfFunc;
     case 0xc181:
-        sprintf(mnemonic, "exg.l  d%1d,a%1d", (code & 0x38) >> 9, (code & 0x7));
+        snprintf(mnemonic, 64, "exg.l  d%1d,a%1d", (code & 0x38) >> 9, (code & 0x7));
         *next_addr = addr + 2;
         goto EndOfFunc;
     }
@@ -1426,12 +1443,12 @@ static char *disac(Long addr, unsigned short code, Long *next_addr, char *mnemon
     {
     case 0xc0c0:
         /* MULU */
-        strcat(mnemonic, "mulu    ");
+        append_text(mnemonic, 64, "mulu    ");
         size = 'w';
         goto L2;
     case 0xc1c0:
         /* MULS */
-        strcat(mnemonic, "muls    ");
+        append_text(mnemonic, 64, "muls    ");
         size = 'w';
         goto L2;
     default:
@@ -1447,14 +1464,14 @@ static char *disac(Long addr, unsigned short code, Long *next_addr, char *mnemon
         case 2:
             size = 'l';
 L0:
-            sprintf(mnemonic, "and.%c   ", size);
+            snprintf(mnemonic, 64, "and.%c   ", size);
 L2:
             p = mnemonic + strlen(mnemonic);
-            b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
+            b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
             if (b == FALSE)
                 goto ErrorReturn;
             p = mnemonic + strlen(mnemonic);
-            sprintf(p, ",d%1d", (code & 0xe00) >> 9);
+            snprintf(p, remaining_text(mnemonic, 64, p), ",d%1d", (code & 0xe00) >> 9);
             goto EndOfFunc;
         case 4:
             size = 'b';
@@ -1465,9 +1482,9 @@ L2:
         case 6:
             size = 'l';
 L1:
-            sprintf(mnemonic, "and.%c   d%1d,", size, (code & 0xe00) >> 9);
+            snprintf(mnemonic, 64, "and.%c   d%1d,", size, (code & 0xe00) >> 9);
             p = mnemonic + strlen(mnemonic);
-            b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, next_addr);
+            b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), size, 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
             if (b == FALSE)
                 goto ErrorReturn;
             goto EndOfFunc;
@@ -1512,20 +1529,20 @@ static char *disae(Long addr, unsigned short code, Long *next_addr, char *mnemon
         switch((code & 0x0600) >> 9)
         {
         case 0:
-            sprintf(mnemonic, "as%c.%c   ", dir, size);
+            snprintf(mnemonic, 64, "as%c.%c   ", dir, size);
             break;
         case 1:
-            sprintf(mnemonic, "ls%c.%c   ", dir, size);
+            snprintf(mnemonic, 64, "ls%c.%c   ", dir, size);
             break;
         case 2:
-            sprintf(mnemonic, "ro%cx.%c  ", dir, size);
+            snprintf(mnemonic, 64, "ro%cx.%c  ", dir, size);
             break;
         case 3:
-            sprintf(mnemonic, "ro%c.%c   ", dir, size);
+            snprintf(mnemonic, 64, "ro%c.%c   ", dir, size);
             break;
         }
         p = mnemonic + strlen(mnemonic);
-        b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), ' ', 0xfff, p, next_addr);
+        b = effective_address(addr + 2, (short)((code & 0x38) >> 3), (short)(code & 0x7), ' ', 0xfff, p, remaining_text(mnemonic, 64, p), next_addr);
         if (b == FALSE)
             goto ErrorReturn;
     } else
@@ -1549,27 +1566,27 @@ static char *disae(Long addr, unsigned short code, Long *next_addr, char *mnemon
         {
             int iw = (code & 0x0e00) >> 9;
 
-            sprintf(count, "d%1d", iw);
+            snprintf(count, sizeof(count), "d%1d", iw);
         } else
         {
             int iw = (code & 0x0e00) >> 9;
 
             iw = (iw == 0) ? 8 : iw;
-            sprintf(count, "#%1d", iw);
+            snprintf(count, sizeof(count), "#%1d", iw);
         }
         switch((code & 0x0018) >> 3)
         {
         case 0:
-            sprintf(mnemonic, "as%c.%c   %s,d%1d", dir, size, count, code & 0x7);
+            snprintf(mnemonic, 64, "as%c.%c   %s,d%1d", dir, size, count, code & 0x7);
             break;
         case 1:
-            sprintf(mnemonic, "ls%c.%c   %s,d%1d", dir, size, count, code & 0x7);
+            snprintf(mnemonic, 64, "ls%c.%c   %s,d%1d", dir, size, count, code & 0x7);
             break;
         case 2:
-            sprintf(mnemonic, "ro%cx.%c  %s,d%1d", dir, size, count, code & 0x7);
+            snprintf(mnemonic, 64, "ro%cx.%c  %s,d%1d", dir, size, count, code & 0x7);
             break;
         case 3:
-            sprintf(mnemonic, "ro%c.%c   %s,d%1d", dir, size, count, code & 0x7);
+            snprintf(mnemonic, 64, "ro%c.%c   %s,d%1d", dir, size, count, code & 0x7);
             break;
         }
         *next_addr = addr + 2;

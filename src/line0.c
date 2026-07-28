@@ -37,6 +37,7 @@ static	int	Addi( char );
 static	int	Subi( char );
 static	int	Eori( char );
 static	int	Eori_t_ccr( void );
+static	int	Eori_t_sr( void );
 static	int	Cmpi( char );
 static	int	Btsti( char );
 static	int	Btst( char, char );
@@ -60,7 +61,7 @@ int	line0( char *pc_ptr )
 
 	code1 = *(pc_ptr++);
 	code2 = *pc_ptr;
-	pc += 2;
+	pc = run68_add32(pc, 2);
 
 	switch( code1 ) {
 		case 0x00:
@@ -95,10 +96,8 @@ int	line0( char *pc_ptr )
 		case 0x0A:
 			if ( code2 == 0x3C )
 				return( Eori_t_ccr() );
-			if ( code2 == 0x7C ) {	/* eori to SR */
-				err68a( "未定義命令を実行しました", __FILE__, __LINE__ );
-				return( TRUE );
-			}
+			if ( code2 == 0x7C )
+				return( Eori_t_sr() );
 			return( Eori( code2 ) );
 		case 0x0C:
 			return( Cmpi( code2 ) );
@@ -190,7 +189,7 @@ static	int	Ori_t_ccr()
 	data = (char)imi_get( S_BYTE );
 
 #ifdef	TRACE
-	printf( "trace: ori_t_ccr src=0x%02X PC=%06lX\n", data, pc - 2 );
+	printf( "trace: ori_t_ccr src=0x%02X PC=%06lX\n", data, run68_sub32(pc, 2) );
 #endif
 
 	/* CCRをセット */
@@ -225,7 +224,7 @@ static	int	Ori_t_sr()
 	data = (short)imi_get( S_WORD );
 
 #ifdef	TRACE
-	printf( "trace: ori_t_sr src=0x%02X PC=%06lX\n", data, pc - 2 );
+	printf( "trace: ori_t_sr src=0x%02X PC=%06lX\n", data, run68_sub32(pc, 2) );
 #endif
 
 	/* SRをセット */
@@ -303,7 +302,7 @@ static	int	Andi_t_ccr()
 	data = (char)imi_get( S_BYTE );
 
 #ifdef	TRACE
-	printf( "trace: andi_t_ccr src=0x%02X PC=%06lX\n", data, pc - 2 );
+	printf( "trace: andi_t_ccr src=0x%02X PC=%06lX\n", data, run68_sub32(pc, 2) );
 #endif
 
 	/* CCRをセット */
@@ -338,7 +337,7 @@ static	int	Andi_t_sr()
 	data = (short)imi_get( S_WORD );
 
 #ifdef	TRACE
-	printf( "trace: andi_t_sr src=0x%02X PC=%06lX\n", data, pc - 2 );
+	printf( "trace: andi_t_sr src=0x%02X PC=%06lX\n", data, run68_sub32(pc, 2) );
 #endif
 
 	/* SRをセット */
@@ -510,6 +509,10 @@ static	int	Eori( char code )
 
 	save_pc = pc;
 	size = ((code >> 6) & 0x03);
+	if ( size == 3 ) {
+		err68a( "不正なアクセスサイズです", __FILE__, __LINE__ );
+		return( TRUE );
+	}
 	mode = ((code & 0x38) >> 3);
 	reg  = (code & 0x07);
 
@@ -558,7 +561,7 @@ static	int	Eori_t_ccr()
 	data = (char)imi_get( S_BYTE );
 
 #ifdef	TRACE
-	printf( "trace: eori_t_ccr src=0x%02X PC=%06lX\n", data, pc - 2 );
+	printf( "trace: eori_t_ccr src=0x%02X PC=%06lX\n", data, run68_sub32(pc, 2) );
 #endif
 
 	/* CCRをセット */
@@ -593,6 +596,21 @@ static	int	Eori_t_ccr()
 			CCR_C_OFF();
 	}
 
+	return( FALSE );
+}
+
+/* EORI #<data>,SR is privileged on the MC68000. */
+static	int	Eori_t_sr()
+{
+	short data;
+
+	if ( SR_S_REF() == 0 ) {
+		err68a( "特権命令を実行しました", __FILE__, __LINE__ );
+		return( TRUE );
+	}
+
+	data = (short)imi_get( S_WORD );
+	sr ^= data;
 	return( FALSE );
 }
 
@@ -670,7 +688,7 @@ static	int	Btsti( char code )
 	char	reg;
 	UChar	bitno;
 	Long	data;
-	Long	mask = 1;
+	ULong	mask = 1;
 	int	size;
 
 	save_pc = pc;
@@ -717,7 +735,7 @@ static	int	Btst( char code1, char code2 )
 	char	reg;
 	UChar	bitno;
 	Long	data;
-	Long	mask = 1;
+	ULong	mask = 1;
 	int	size;
 
 	save_pc = pc;
@@ -765,7 +783,7 @@ static	int	Bchgi( char code )
 	char	mode;
 	char	reg;
 	UChar	bitno;
-	Long	mask = 1;
+	ULong	mask = 1;
 	int	size;
 	int	work_mode;
 	Long	data;
@@ -831,7 +849,7 @@ static	int	Bchg( char code1, char code2 )
 	char	reg;
 	UChar	bitno;
 	Long	data;
-	Long	mask = 1;
+	ULong	mask = 1;
 	int	size;
 	int	work_mode;
 
@@ -898,7 +916,7 @@ static	int	Bclri( char code )
 	UChar	bitno;
 	short	disp = 0;
 	Long	data;
-	Long	mask = 1;
+	ULong	mask = 1;
 	int	size;
 	int	work_mode;
 
@@ -963,7 +981,7 @@ static	int	Bclr( char code1, char code2 )
 	UChar	bitno;
 	short	disp = 0;
 	Long	data;
-	Long	mask = 1;
+	ULong	mask = 1;
 	int	size;
 	int	work_mode;
 
@@ -1177,7 +1195,7 @@ static	int	Movep_f( char code1, char code2 )
 	}
 
 #ifdef	TRACE
-	printf( "trace: movep_f  src=%d PC=%06lX\n", rd [ d_reg ], pc - 2 );
+	printf( "trace: movep_f  src=%d PC=%06lX\n", rd [ d_reg ], run68_sub32(pc, 2) );
 #endif
 
 	return( FALSE );
@@ -1212,7 +1230,7 @@ static	int	Movep_t( char code1, char code2 )
 	}
 
 #ifdef	TRACE
-	printf( "trace: movep_t  PC=%06lX\n", pc - 2 );
+	printf( "trace: movep_t  PC=%06lX\n", run68_sub32(pc, 2) );
 #endif
 
 	return( FALSE );

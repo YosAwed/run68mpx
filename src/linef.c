@@ -45,6 +45,28 @@ typedef union {
 	UChar	c [ 4 ];
 } FLT;
 
+static Long Pack4(const UChar *bytes)
+{
+	return (Long)(((ULong)bytes[3] << 24) |
+	              ((ULong)bytes[2] << 16) |
+	              ((ULong)bytes[1] << 8) |
+	              (ULong)bytes[0]);
+}
+
+static Long Add32(Long value, Long delta)
+{
+	return (Long)((ULong)value + (ULong)delta);
+}
+
+static size_t GuestRemaining(Long address)
+{
+	ULong normalized = (ULong)address & 0x00ffffffu;
+
+	if (normalized >= (ULong)mem_aloc)
+		return 0;
+	return (size_t)((ULong)mem_aloc - normalized);
+}
+
 static	int	fefunc( UChar );
 static	Long	Lmul( Long, Long );
 static	Long	Ldiv( Long, Long );
@@ -120,7 +142,7 @@ int	linef( char *pc_ptr )
 	char	code;
 
 	code = *(pc_ptr++);
-	pc += 2;
+	pc = Add32(pc, 2);
 
 	/* DOSコールの処理 */
 	if ( code == (char)0xFF )
@@ -149,9 +171,9 @@ static	int	fefunc( UChar code )
 	SR_S_ON();
 	adr = mem_get( 0x2C, S_LONG );
 	if ( adr != HUMAN_WORK ) {
-		ra [ 7 ] -= 4;
-		mem_set( ra [ 7 ], pc - 2, S_LONG );
-		ra [ 7 ] -= 2;
+		ra [ 7 ] = Add32(ra [ 7 ], -4);
+		mem_set( ra [ 7 ], run68_sub32(pc, 2), S_LONG );
+		ra [ 7 ] = Add32(ra [ 7 ], -2);
 		mem_set( ra [ 7 ], sr, S_WORD );
 		pc = adr;
 		return( FALSE );
@@ -182,11 +204,12 @@ static	int	fefunc( UChar code )
 			rd [ 0 ] = Umod( (ULong)rd [ 0 ], (ULong)rd [ 1 ] );
 			break;
 		case 0x08:	/* _IMUL */
-			rd [ 1 ] = (ULong)rd [ 0 ] * (ULong)rd [ 1 ];
-			if ( rd [ 1 ] < 0 )
-				rd [ 0 ] = -1;	/* 本当は上位4バイトが入る */
-			else
-				rd [ 0 ] = 0;	/* 本当は上位4バイトが入る */
+			{
+				int64_t product = (int64_t)rd [ 0 ] * (int64_t)rd [ 1 ];
+
+				rd [ 0 ] = (Long)((uint64_t)product >> 32);
+				rd [ 1 ] = (Long)(uint32_t)product;
+			}
 			break;
 		case 0x09:	/* _IDIV */ /* unsigned int 除算 d0..d1 d0/d1 */
 			{
@@ -315,8 +338,8 @@ static	int	fefunc( UChar code )
 			Pow( rd [ 0 ], rd [ 1 ], rd[ 2 ], rd[ 3 ] );
 			break; 
 		case 0x40:	/* _RND */
-			rd [ 0 ] = rand() * rand() * 4;
-			rd [ 1 ] = rand() * rand() * 4;
+			rd [ 0 ] = (Long)((ULong)rand() * (ULong)rand() * 4u);
+			rd [ 1 ] = (Long)((ULong)rand() * (ULong)rand() * 4u);
 			break;
 		case 0x58:
 			Ftst( rd [ 0 ] );
@@ -392,7 +415,7 @@ static	int	fefunc( UChar code )
 */
 static	Long	Lmul( Long d0, Long d1 )
 {
-	return( d0 * d1 );
+	return (Long)((ULong)d0 * (ULong)d1);
 }
 
 /*
@@ -407,6 +430,8 @@ static	Long	Ldiv( Long d0, Long d1 )
 	}
 
 	CCR_C_OFF();
+	if (d0 == INT32_MIN && d1 == -1)
+		return INT32_MIN;
 	return( d0 / d1 );
 }
 
@@ -422,6 +447,8 @@ static	Long	Lmod( Long d0, Long d1 )
 	}
 
 	CCR_C_OFF();
+	if (d0 == INT32_MIN && d1 == -1)
+		return 0;
 	return( d0 % d1 );
 }
 
@@ -487,10 +514,7 @@ static	Long	Ltof( Long d0 )
 
 	fl.flt = (float)d0;
 
-	d0  = (fl.c [ 3 ] << 24);
-	d0 |= (fl.c [ 2 ] << 16);
-	d0 |= (fl.c [ 1 ] << 8);
-	d0 |= fl.c [ 0 ];
+	d0 = Pack4(fl.c);
 
 	return( d0 );
 }
@@ -549,7 +573,7 @@ static	Long	Stol( Long adr )
 			CCR_V_OFF();
 		} else {
 			CCR_C_OFF();
-			ra [ 0 ] += Strl( p, 10 );
+			ra [ 0 ] = run68_add32(ra [ 0 ], Strl( p, 10 ));
 		}
 	} else {
 		if ( errno == ERANGE ) {
@@ -558,7 +582,7 @@ static	Long	Stol( Long adr )
 			CCR_V_ON();
 		} else {
 			CCR_C_OFF();
-			ra [ 0 ] += Strl( p, 10 );
+			ra [ 0 ] = run68_add32(ra [ 0 ], Strl( p, 10 ));
 		}
 	}
 	return( ret );
@@ -582,7 +606,7 @@ static	void	Stod( Long adr )
 		CCR_V_ON();
 	} else {
 		CCR_C_OFF();
-		ra [ 0 ] += Strl( p, 10 );
+		ra [ 0 ] = run68_add32(ra [ 0 ], Strl( p, 10 ));
 	}
 
 	From_dbl( &ret, 0 );
@@ -625,7 +649,7 @@ static	void	Dtos( Long d0, Long d1, Long a0 )
 	len = strlen( p );
 	if ( p [ len - 1 ] == '.' )
 		p [ len - 1 ] = '\0';
-	ra [ 0 ] += strlen( p );
+	ra [ 0 ] = run68_add32(ra [ 0 ], (Long)strlen( p ));
 }
 
 /*
@@ -638,8 +662,8 @@ static	void	Ltos( Long num, Long adr )
 
 	p = prog_ptr + adr;
 //	_ltoa( num, p, 10 );
-	sprintf( p, "%d", num );
-	ra [ 0 ] += strlen( p );
+	snprintf(p, GuestRemaining(ra [ 0 ]), "%d", num );
+	ra [ 0 ] = run68_add32(ra [ 0 ], (Long)strlen( p ));
 }
 
 /*
@@ -652,8 +676,8 @@ static	void	Htos( Long num, Long adr )
 
 	p = prog_ptr + adr;
 //	_ltoa( num, p, 16 );
-	sprintf( p, "%X", num );
-	ra [ 0 ] += strlen( p );
+	snprintf(p, GuestRemaining(ra [ 0 ]), "%X", num );
+	ra [ 0 ] = run68_add32(ra [ 0 ], (Long)strlen( p ));
 }
 
 /*
@@ -666,8 +690,8 @@ static	void	Otos( Long num, Long adr )
 
 	p = prog_ptr + adr;
 //	_ltoa( num, p, 8 );
-	sprintf( p, "%o", num );
-	ra [ 0 ] += strlen( p );
+	snprintf(p, GuestRemaining(ra [ 0 ]), "%o", num );
+	ra [ 0 ] = run68_add32(ra [ 0 ], (Long)strlen( p ));
 }
 
 /*
@@ -680,7 +704,7 @@ static	void	Btos( Long num, Long adr )
 
 	p = prog_ptr + adr;
 	_ltoa( num, p, 2 );
-	ra [ 0 ] += strlen( p );
+	ra [ 0 ] = run68_add32(ra [ 0 ], (Long)strlen( p ));
 }
 
 /*
@@ -721,9 +745,9 @@ static	void	Val( Long str )
 	} else {
 		CCR_C_OFF();
 		if ( base != 10 )
-			ra [ 0 ] += 2 + Strl( p + 2, base );
+			ra [ 0 ] = run68_add32(ra [ 0 ], 2 + Strl( p + 2, base ));
 		else
-			ra [ 0 ] += Strl( p, 10 );
+			ra [ 0 ] = run68_add32(ra [ 0 ], Strl( p, 10 ));
 	}
 
 	From_dbl( &ret, 0 );
@@ -753,13 +777,13 @@ static	void	Iusing( Long num, Long keta, Long adr )
 
 	if ( keta < 10 ) {
 		form1 [ 1 ] = keta + '0';
-		sprintf( p, form1, num );
+		snprintf(p, GuestRemaining(ra [ 0 ]), form1, num );
 	} else {
 		form2 [ 1 ] = keta / 10 + '0';
 		form2 [ 2 ] = keta % 10 + '0';
-		sprintf( p, form2, num );
+		snprintf(p, GuestRemaining(ra [ 0 ]), form2, num );
 	}
-	ra [ 0 ] += strlen( p );
+	ra [ 0 ] = run68_add32(ra [ 0 ], (Long)strlen( p ));
 }
 
 /*
@@ -798,25 +822,25 @@ static	void	Using( Long d0, Long d1, Long isz, Long dsz, Long atr, Long a0 )
 		if ( dsz < 10 ) {
 			form1 [ 1 ] = isz + '0';
 			form1 [ 3 ] = dsz + '0';
-			sprintf( p, form1, arg1.dbl );
+			snprintf(p, GuestRemaining(ra [ 0 ]), form1, arg1.dbl );
 		} else {
 			form2 [ 1 ] = isz + '0';
 			form2 [ 3 ] = dsz / 10 + '0';
 			form2 [ 4 ] = dsz % 10 + '0';
-			sprintf( p, form2, arg1.dbl );
+			snprintf(p, GuestRemaining(ra [ 0 ]), form2, arg1.dbl );
 		}
 	} else {
 		if ( dsz < 10 ) {
 			form3 [ 1 ] = isz / 10 + '0';
 			form3 [ 2 ] = isz % 10 + '0';
 			form3 [ 4 ] = dsz + '0';
-			sprintf( p, form3, arg1.dbl );
+			snprintf(p, GuestRemaining(ra [ 0 ]), form3, arg1.dbl );
 		} else {
 			form4 [ 1 ] = isz / 10 + '0';
 			form4 [ 2 ] = isz % 10 + '0';
 			form4 [ 4 ] = dsz / 10 + '0';
 			form4 [ 5 ] = dsz % 10 + '0';
-			sprintf( p, form4, arg1.dbl );
+			snprintf(p, GuestRemaining(ra [ 0 ]), form4, arg1.dbl );
 		}
 	}
 
@@ -876,7 +900,7 @@ static	void	Using( Long d0, Long d1, Long isz, Long dsz, Long atr, Long a0 )
 			strcat( p, " " );
 	}
 
-	ra [ 0 ] += strlen( p );
+	ra [ 0 ] = run68_add32(ra [ 0 ], (Long)strlen( p ));
 }
 
 /*
@@ -1288,10 +1312,7 @@ static	Long	Fmul( Long d0, Long d1 )
 	CCR_C_OFF();
 	arg1.flt = arg1.flt * arg2.flt;
 
-	d0  = (arg1.c [ 3 ] << 24);
-	d0 |= (arg1.c [ 2 ] << 16);
-	d0 |= (arg1.c [ 1 ] << 8);
-	d0 |= arg1.c [ 0 ];
+	d0 = Pack4(arg1.c);
 
 	return( d0 );
 }
@@ -1324,10 +1345,7 @@ static	Long	Fdiv( Long d0, Long d1 )
 	CCR_C_OFF();
 	arg1.flt = arg1.flt / arg2.flt;
 
-	d0  = (arg1.c [ 3 ] << 24);
-	d0 |= (arg1.c [ 2 ] << 16);
-	d0 |= (arg1.c [ 1 ] << 8);
-	d0 |= arg1.c [ 0 ];
+	d0 = Pack4(arg1.c);
 
 	return( d0 );
 }
@@ -1552,10 +1570,7 @@ static	void	Cdtof( Long adr )
 	fl.flt = (float)arg.dbl;
 	CCR_C_OFF();
 
-	d0  = (fl.c [ 3 ] << 24);
-	d0 |= (fl.c [ 2 ] << 16);
-	d0 |= (fl.c [ 1 ] << 8);
-	d0 |= fl.c [ 0 ];
+	d0 = Pack4(fl.c);
 	mem_set( adr, d0, S_LONG );
 }
 
@@ -1742,14 +1757,8 @@ static	int	Strl( char *p, int base )
 */
 static	void	From_dbl( DBL *p, int reg )
 {
-	rd [ reg     ]  = (p -> c [ 7 ] << 24);
-	rd [ reg     ] |= (p -> c [ 6 ] << 16);
-	rd [ reg     ] |= (p -> c [ 5 ] << 8);
-	rd [ reg     ] |= p -> c [ 4 ];
-	rd [ reg + 1 ]  = (p -> c [ 3 ] << 24);
-	rd [ reg + 1 ] |= (p -> c [ 2 ] << 16);
-	rd [ reg + 1 ] |= (p -> c [ 1 ] << 8);
-	rd [ reg + 1 ] |= p -> c [ 0 ];
+	rd [ reg ] = Pack4(&p -> c [ 4 ]);
+	rd [ reg + 1 ] = Pack4(&p -> c [ 0 ]);
 }
 
 /*

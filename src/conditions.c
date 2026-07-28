@@ -63,7 +63,7 @@ void check(char *mode, Long src, Long dest, Long result, int size, short before)
 
 Long getMSB(Long num, int size) {
 
-	Long ret;
+	Long ret = 0;
 
 	switch (size) {
 		case S_BYTE:
@@ -83,7 +83,7 @@ Long getMSB(Long num, int size) {
 }
 
 Long getBitsByDataSize(Long num, int size) {
-	Long ret;
+	Long ret = 0;
 	switch (size) {
 		case S_BYTE:
 			ret = num & 0xff;
@@ -302,7 +302,7 @@ void sub_conditions(Long src, Long dest, Long result, int size, BOOL zero_flag) 
 	}
 
 	/* Zero Flag */
-	if ((zero_flag == 1) && (CCR_Z_REF() != 0)) {
+	if (zero_flag && (CCR_Z_REF() != 0)) {
 		CCR_Z_ON();
 	} else {
 		CCR_Z_OFF();
@@ -353,7 +353,7 @@ void neg_conditions(Long dest, Long result, int size, BOOL zero_flag) {
 	}
 
 	/* Zero Flag */
-	if (getBitsByDataSize(result, size) == 0) {
+	if (zero_flag && getBitsByDataSize(result, size) == 0) {
 		CCR_Z_ON();
 	} else {
 		CCR_Z_OFF();
@@ -365,4 +365,35 @@ void neg_conditions(Long dest, Long result, int size, BOOL zero_flag) {
 	} else {
 		CCR_N_OFF();
 	}
+}
+
+/* 68000の4ビット条件コードをCCRから評価する */
+int get_cond(char cond)
+{
+	int carry = CCR_C_REF() != 0;
+	int zero = CCR_Z_REF() != 0;
+	int overflow = CCR_V_REF() != 0;
+	int negative = CCR_N_REF() != 0;
+
+	switch ((unsigned char)cond & 0x0f) {
+		case 0x00: return TRUE;                         /* T  */
+		case 0x01: return FALSE;                        /* F  */
+		case 0x02: return !carry && !zero ? TRUE : FALSE; /* HI */
+		case 0x03: return carry || zero ? TRUE : FALSE; /* LS */
+		case 0x04: return !carry ? TRUE : FALSE;        /* CC */
+		case 0x05: return carry ? TRUE : FALSE;         /* CS */
+		case 0x06: return !zero ? TRUE : FALSE;         /* NE */
+		case 0x07: return zero ? TRUE : FALSE;          /* EQ */
+		case 0x08: return !overflow ? TRUE : FALSE;     /* VC */
+		case 0x09: return overflow ? TRUE : FALSE;      /* VS */
+		case 0x0a: return !negative ? TRUE : FALSE;     /* PL */
+		case 0x0b: return negative ? TRUE : FALSE;      /* MI */
+		case 0x0c: return negative == overflow ? TRUE : FALSE; /* GE */
+		case 0x0d: return negative != overflow ? TRUE : FALSE; /* LT */
+		case 0x0e:
+			return !zero && negative == overflow ? TRUE : FALSE; /* GT */
+		case 0x0f:
+			return zero || negative != overflow ? TRUE : FALSE;  /* LE */
+	}
+	return FALSE;
 }

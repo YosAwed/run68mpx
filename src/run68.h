@@ -86,7 +86,10 @@
 
 
 #include <stdint.h> // for intXX_t
-#include <stdlib.h>	
+#include <ctype.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 typedef	int8_t		Char ;
 typedef	uint8_t		UChar ;
@@ -94,6 +97,16 @@ typedef	int16_t		Short ;
 typedef	uint16_t	UShort ;
 typedef	int32_t		Long ;			// 64bit 環境対応
 typedef	uint32_t	ULong ;			// 64bit 環境対応
+
+static inline Long run68_add32(Long value, Long delta)
+{
+	return (Long)((ULong)value + (ULong)delta);
+}
+
+static inline Long run68_sub32(Long value, Long delta)
+{
+	return (Long)((ULong)value - (ULong)delta);
+}
 
 
 /*
@@ -118,8 +131,42 @@ typedef	uint32_t	ULong ;			// 64bit 環境対応
 #define _fcvt		fcvt
 #define _gcvt		gcvt
 #define _stricmp	strcasecmp
-#define _strlwr(p)	{ char *s; for (s = p; *s; s++) *s = tolower(*s); }
-#define _ltoa(v, p, n)	snprintf(p, n, "%l", v)
+static inline char *run68_strlwr(char *text)
+{
+	for (char *p = text; *p != '\0'; ++p)
+		*p = (char)tolower((unsigned char)*p);
+	return text;
+}
+
+static inline char *run68_ltoa(Long value, char *text, int radix)
+{
+	static const char digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+	char reversed[33];
+	ULong magnitude;
+	size_t length = 0;
+	int negative = radix == 10 && value < 0;
+
+	if (radix < 2 || radix > 36) {
+		text[0] = '\0';
+		return text;
+	}
+
+	magnitude = negative ? 0u - (ULong)value : (ULong)value;
+	do {
+		reversed[length++] = digits[magnitude % (ULong)radix];
+		magnitude /= (ULong)radix;
+	} while (magnitude != 0);
+	if (negative)
+		reversed[length++] = '-';
+
+	for (size_t i = 0; i < length; ++i)
+		text[i] = reversed[length - i - 1];
+	text[length] = '\0';
+	return text;
+}
+
+#define _strlwr(p)	run68_strlwr(p)
+#define _ltoa(v, p, n)	run68_ltoa((Long)(v), (p), (n))
 #define BOOL    	int
 #endif
 #define	TRUE		-1
@@ -275,6 +322,8 @@ void	readenv_from_ini(char *path);
 /* load.c */
 FILE	*prog_open(char *, int ) ;
 Long	prog_read( FILE *, char *, Long, Long *, Long *, int ) ;
+BOOL	run68_pack_dos_datetime( time_t, ULong * );
+BOOL	run68_unpack_dos_datetime( ULong, time_t * );
 int	make_psp( char *, Long, Long, Long, Long ) ;
 
 /* exec.c */

@@ -29,14 +29,16 @@
 #include <string.h>
 #if defined(WIN32)
 #include <direct.h>
+#else
+#include <unistd.h>
 #endif
 #include "run68.h"
 
 static	UChar	xhead [ XHEAD_SIZE ];
 
-static	Long	xfile_cnv( Long *, Long, int );
-static	int	xrelocate( Long, Long, Long );
-static	Long	xhead_getl( int );
+static	Long	xfile_cnv( Long *, Long *, Long, Long, int );
+static	int	xrelocate( ULong, ULong, Long, ULong, Long );
+static	ULong	xhead_getl( int );
 static	int	set_fname( char *, Long );
 
 /* doscall.c */
@@ -86,12 +88,15 @@ FILE    *prog_open(char *fname, int mes_flag)
         // ここまで追加(by Yokko氏)
         goto ErrorRet;
     }
-    if (exp != NULL && !_stricmp(exp, ".x") && !_stricmp(exp, ".r"))
+    if (exp != NULL && _stricmp(exp, ".x") != 0 &&
+        _stricmp(exp, ".r") != 0)
         goto ErrorRet; /* 拡張子が違う */
 #if defined(WIN32)
-    GetCurrentDirectory(sizeof(cwd), cwd);
+    if (GetCurrentDirectory(sizeof(cwd), cwd) == 0)
+        goto ErrorRet;
 #else
-    getcwd(cwd, sizeof(cwd));
+    if (getcwd(cwd, sizeof(cwd)) == NULL)
+        goto ErrorRet;
 #endif
     /* PATH環境変数を取得する */
 #if defined(WIN32)
@@ -113,19 +118,21 @@ FILE    *prog_open(char *fname, int mes_flag)
         } else
         {
             strcpy(fullname, dir);
-            if (fullname[strlen(fullname)-1] != sep_chr)
+            if (fullname[strlen(fullname)-1] != sep_chr) {
                 strcat(fullname, sep_str);
-	        strcat(fullname, fname);
-	        strcat(fullname, ".r");
-    	    if ((fp=fopen(fullname, "rb")) != NULL)
-	        	goto EndOfFunc;
+            }
+            strcat(fullname, fname);
+            strcat(fullname, ".r");
+            if ((fp=fopen(fullname, "rb")) != NULL)
+                goto EndOfFunc;
             strcpy(fullname, dir);
-            if (fullname[strlen(fullname)-1] != sep_chr)
+            if (fullname[strlen(fullname)-1] != sep_chr) {
                 strcat(fullname, sep_str);
-	        strcat(fullname, fname);
+            }
+            strcat(fullname, fname);
             strcat(fullname, ".x");
             if ((fp=fopen(fullname, "rb")) != NULL)
-	        	goto EndOfFunc;
+                goto EndOfFunc;
         }
     }
 EndOfFunc:
@@ -183,12 +190,21 @@ Long	prog_read( FILE *fp, char *fname, Long read_top,
 	char	*read_ptr;
 	Long	read_sz;
 	Long	pc_begin;
+	Long	load_limit;
 	int	x_flag = FALSE;
+	int	expect_x = FALSE;
 	int	loadmode;
-	int	i;
+	size_t	fname_len;
+	long	file_size;
 
 	loadmode = ((*prog_sz2 >> 24) & 0x03);
 	*prog_sz2 &= 0xFFFFFF;
+	load_limit = *prog_sz2;
+	fname_len = strlen(fname);
+	if (loadmode == 3 ||
+	    (loadmode != 1 && fname_len >= 2 &&
+	     _stricmp(fname + fname_len - 2, ".x") == 0))
+		expect_x = TRUE;
 
 	if ( fseek( fp, 0, SEEK_END ) != 0 ) {
 		fclose( fp );
@@ -196,22 +212,24 @@ Long	prog_read( FILE *fp, char *fname, Long read_top,
 			fprintf(stderr, "ファイルのシークに失敗しました\n");
 		return( -11 );
 	}
-	if ( (*prog_sz=ftell( fp )) <= 0 ) {
+	file_size = ftell(fp);
+	if (file_size <= 0 || (uint64_t)file_size > INT32_MAX) {
 		fclose( fp );
 		if ( mes_flag == TRUE )
-			fprintf(stderr, "ファイルサイズが０です\n");
+			fprintf(stderr, "ファイルサイズが不正です\n");
 		return( -11 );
 	}
+	*prog_sz = (Long)file_size;
 	if ( fseek( fp, 0, SEEK_SET ) != 0 ) {
 		fclose( fp );
 		if ( mes_flag == TRUE )
 			fprintf(stderr, "ファイルのシークに失敗しました\n");
 		return( -11 );
 	}
-	if ( read_top + *prog_sz > *prog_sz2 ) {
+	if (read_top < 0 || load_limit < 0 || read_top > load_limit) {
 		fclose( fp );
 		if ( mes_flag == TRUE )
-			fprintf(stderr, "ファイルサイズが大きすぎます\n");
+			fprintf(stderr, "読み込みアドレスが不正です\n");
 		return( -8 );
 	}
 
@@ -221,31 +239,54 @@ Long	prog_read( FILE *fp, char *fname, Long read_top,
 
 	/* XHEAD_SIZEバイト読み込む */
 	if ( *prog_sz >= XHEAD_SIZE ) {
-		if ( fread( read_ptr, 1, XHEAD_SIZE, fp ) != XHEAD_SIZE ) {
+		if ( fread( xhead, 1, XHEAD_SIZE, fp ) != XHEAD_SIZE ) {
 			fclose( fp );
 			if ( mes_flag == TRUE )
 				fprintf(stderr, "ファイルの読み込みに失敗しました\n");
 			return( -11 );
 		}
 		read_sz -= XHEAD_SIZE;
-		if ( loadmode == 1 )
-			i = 0;		/* Rファイル */
-		else if ( loadmode == 3 )
-			i = 1;		/* Xファイル */
-		else
-			i = strlen( fname ) - 2;
-		if ( mem_get( read_top, S_WORD ) == 0x4855 && i > 0 )
-		{
-			if ( loadmode == 3 ||
-			     strcmp( &(fname [ i ]), ".x" ) == 0 ||
-			     strcmp( &(fname [ i ]), ".X" ) == 0 ) {
-				x_flag = TRUE;
-				memcpy( xhead, read_ptr, XHEAD_SIZE );
-				*prog_sz = read_sz;
+		if (expect_x) {
+			if (xhead[0] != 0x48 || xhead[1] != 0x55) {
+				fclose(fp);
+				if (mes_flag == TRUE)
+					fprintf(stderr, "Xファイルのヘッダーが不正です\n");
+				return -11;
 			}
-		}
-		if ( x_flag == FALSE )
+			x_flag = TRUE;
+			*prog_sz = read_sz;
+			if ((uint64_t)(ULong)read_sz >
+			    (uint64_t)(ULong)(load_limit - read_top)) {
+				fclose(fp);
+				if (mes_flag == TRUE)
+					fprintf(stderr, "Xファイルが大きすぎます\n");
+				return -8;
+			}
+		} else {
+			if ((uint64_t)(ULong)*prog_sz >
+			    (uint64_t)(ULong)(load_limit - read_top)) {
+				fclose(fp);
+				if (mes_flag == TRUE)
+					fprintf(stderr, "ファイルサイズが大きすぎます\n");
+				return -8;
+			}
+			memcpy(read_ptr, xhead, XHEAD_SIZE);
 			read_ptr += XHEAD_SIZE;
+		}
+	} else {
+		if (expect_x) {
+			fclose(fp);
+			if (mes_flag == TRUE)
+				fprintf(stderr, "Xファイルのヘッダーが短すぎます\n");
+			return -11;
+		}
+		if ((uint64_t)(ULong)*prog_sz >
+		    (uint64_t)(ULong)(load_limit - read_top)) {
+			fclose(fp);
+			if (mes_flag == TRUE)
+				fprintf(stderr, "ファイルサイズが大きすぎます\n");
+			return -8;
+		}
 	}
 
 	if ( fread( read_ptr, 1, read_sz, fp ) != (size_t)read_sz ) {
@@ -261,8 +302,10 @@ Long	prog_read( FILE *fp, char *fname, Long read_top,
 	/* Xファイルの処理 */
 	*prog_sz2 = *prog_sz;
 	if ( x_flag == TRUE ) {
-		if ( (pc_begin=xfile_cnv( prog_sz, read_top, mes_flag )) == 0 )
-			return( -11 );
+		pc_begin = xfile_cnv(prog_sz, prog_sz2, read_top, load_limit,
+		                     mes_flag);
+		if (pc_begin < 0)
+			return pc_begin;
 	}
 
 	return( pc_begin );
@@ -270,41 +313,63 @@ Long	prog_read( FILE *fp, char *fname, Long read_top,
 
 /*
  　機能：Xファイルをコンバートする
- 戻り値： 0 = エラー
- 　　　　!0 = プログラム開始アドレス
+ 戻り値： 負 = エラーコード
+		 0以上 = プログラム開始アドレス
 */
-static	Long	xfile_cnv( Long *prog_size, Long read_top, int mes_flag )
+static	Long	xfile_cnv( Long *prog_size, Long *initialized_prog_size,
+			   Long read_top, Long load_limit, int mes_flag )
 {
-	Long	pc_begin;
-	Long	code_size;
-	Long	data_size;
-	Long	bss_size;
-	Long	reloc_size;
+	ULong	pc_begin;
+	ULong	base_address;
+	ULong	code_size;
+	ULong	data_size;
+	ULong	bss_size;
+	ULong	reloc_size;
+	uint64_t initialized_size;
+	uint64_t image_size;
+	uint64_t required_file_size;
 
 	if ( xhead_getl( 0x3C ) != 0 ) {
 		if ( mes_flag == TRUE )
 			fprintf(stderr, "BINDされているファイルです\n");
-		return( 0 );
+		return( -11 );
 	}
+	base_address = xhead_getl( 0x04 );
 	pc_begin   = xhead_getl( 0x08 );
 	code_size  = xhead_getl( 0x0C );
 	data_size  = xhead_getl( 0x10 );
 	bss_size   = xhead_getl( 0x14 );
 	reloc_size = xhead_getl( 0x18 );
+	initialized_size = (uint64_t)code_size + data_size;
+	image_size = initialized_size + bss_size;
+	required_file_size = initialized_size + reloc_size;
+
+	if (initialized_size == 0 ||
+	    required_file_size > (uint64_t)(ULong)*prog_size ||
+	    image_size > (uint64_t)(ULong)(load_limit - read_top) ||
+	    pc_begin >= initialized_size) {
+		if (mes_flag == TRUE)
+			fprintf(stderr, "Xファイルのセクションサイズが不正です\n");
+		return image_size > (uint64_t)(ULong)(load_limit - read_top)
+		       ? -8 : -11;
+	}
 
 	if ( reloc_size != 0 ) {
-		if ( xrelocate( code_size + data_size, reloc_size, read_top )
+		if ( xrelocate((ULong)initialized_size, reloc_size, read_top,
+		               (ULong)initialized_size,
+		               (Long)((ULong)read_top - base_address))
 		     == FALSE ) {
 			if ( mes_flag == TRUE )
-				fprintf(stderr, "未対応のリロケート情報があります\n");
-			return( 0 );
+				fprintf(stderr, "リロケート情報が不正です\n");
+			return( -11 );
 		}
 	}
 
-	memset( prog_ptr + read_top + code_size + data_size, 0, bss_size );
-	*prog_size += bss_size;
+	memset(prog_ptr + read_top + (ULong)initialized_size, 0, bss_size);
+	*initialized_prog_size = (Long)initialized_size;
+	*prog_size = (Long)image_size;
 
-	return( read_top + pc_begin );
+	return( (Long)((ULong)read_top + pc_begin) );
 }
 
 /*
@@ -312,20 +377,34 @@ static	Long	xfile_cnv( Long *prog_size, Long read_top, int mes_flag )
  戻り値： TRUE = 正常終了
  　　　　FALSE = 異常終了
 */
-static	int	xrelocate( Long reloc_adr, Long reloc_size, Long read_top )
+static	int	xrelocate( ULong reloc_adr, ULong reloc_size, Long read_top,
+			   ULong initialized_size, Long relocation_delta )
 {
-	Long	prog_adr;
+	ULong	prog_offset = 0;
+	ULong	disp;
 	Long	data;
-	UShort	disp;
 
-	prog_adr = read_top;
-	for(; reloc_size > 0; reloc_size -= 2, reloc_adr += 2 ) {
+	while (reloc_size != 0) {
+		if (reloc_size < 2 || (reloc_adr & 1u) != 0)
+			return FALSE;
 		disp = (UShort)mem_get( read_top + reloc_adr, S_WORD );
-		if ( disp == 1 )
-			return ( FALSE );
-		prog_adr += disp;
-		data = mem_get( prog_adr, S_LONG ) + read_top;
-		mem_set( prog_adr, data, S_LONG );
+		reloc_adr += 2;
+		reloc_size -= 2;
+		if (disp == 1) {
+			if (reloc_size < 4)
+				return FALSE;
+			disp = (ULong)mem_get(read_top + reloc_adr, S_LONG);
+			reloc_adr += 4;
+			reloc_size -= 4;
+		}
+		if ((uint64_t)prog_offset + disp + sizeof(Long) > initialized_size)
+			return FALSE;
+		prog_offset += disp;
+		if ((prog_offset & 1u) != 0)
+			return FALSE;
+		data = (Long)((ULong)mem_get(read_top + prog_offset, S_LONG) +
+		              (ULong)relocation_delta);
+		mem_set(read_top + prog_offset, data, S_LONG);
 	}
 
 	return( TRUE );
@@ -335,10 +414,10 @@ static	int	xrelocate( Long reloc_adr, Long reloc_size, Long read_top )
  　機能：xheadからロングデータをゲットする
  戻り値：データの値
 */
-static	Long	xhead_getl( int adr )
+static	ULong	xhead_getl( int adr )
 {
 	UChar	*p;
-	Long	d;
+	ULong	d;
 
 	p = &( xhead [ adr ] );
 

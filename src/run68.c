@@ -120,7 +120,7 @@ EXEC_INSTRUCTION_INFO OP_info;
 int main( int argc, char *argv[], char *envp[] )
 {
 	char	fname [ 89 ];		/* 実行ファイル名 */
-	FILE	*fp;			/* 実行ファイルのファイルポインタ */
+	FILE	*fp = NULL;		/* 実行ファイルのファイルポインタ */
 	char	*arg_ptr;		/* コマンドライン文字列格納領域 */
 #if !defined(ENV_FROM_INI)
 	char	buf [ ENV_SIZE ];
@@ -160,6 +160,12 @@ Restart:
                     char *p; /* アドレス文字列へのポインタ */
                     if (strlen(argv[i]) == strlen("-tr"))
                     {
+                        if (i + 1 >= argc)
+                        {
+                            fprintf(stderr, "-tr には16進アドレスが必要です。\n");
+                            invalid_flag = TRUE;
+                            break;
+                        }
                         i++; /* "-tr"とアドレスとの間に空白あり。*/
                         p = argv[i];
                     } else
@@ -169,8 +175,8 @@ Restart:
                     /* 16進文字列が正しいことを確認 */
                     for (j = 0; (unsigned int)j < strlen(p); j ++)
                     {
-                        char c = toupper(p[j]);
-                        if (c < '0' || '9' < c && c < 'A' || 'F' < c)
+                        char c = (char)toupper((unsigned char)p[j]);
+                        if (c < '0' || ('9' < c && c < 'A') || 'F' < c)
                         {
                             fprintf(stderr, "16進アドレス指定は無効です。(\"%s\")\n", p);
                             invalid_flag = TRUE;
@@ -249,7 +255,6 @@ Restart:
 
 	/* メモリを確保する */
 	if ( (prog_ptr=malloc( mem_aloc )) == NULL ) {
-		fclose( fp );
 		fprintf(stderr, "メモリが確保できません\n");
 		return( 1 );
 	}
@@ -451,9 +456,9 @@ static int exec_trap(BOOL *restart)
 				trap_adr = ((trap_adr << 8) | *(trap_mem1 + 2));
 				trap_adr = ((trap_adr << 8) | *(trap_mem1 + 3));
 				trap_count = 0;
-				ra [ 7 ] -= 4;
+				ra [ 7 ] = run68_sub32(ra [ 7 ], 4);
 				mem_set( ra [ 7 ], pc, S_LONG );
-				ra [ 7 ] -= 2;
+				ra [ 7 ] = run68_sub32(ra [ 7 ], 2);
 				mem_set( ra [ 7 ], sr, S_WORD );
 				pc = trap_adr;
 				SR_S_ON();
@@ -464,9 +469,9 @@ static int exec_trap(BOOL *restart)
 				trap_adr = ((trap_adr << 8) | *(trap_mem2 + 2));
 				trap_adr = ((trap_adr << 8) | *(trap_mem2 + 3));
 				trap_count = 0;
-				ra [ 7 ] -= 4;
+				ra [ 7 ] = run68_sub32(ra [ 7 ], 4);
 				mem_set( ra [ 7 ], pc, S_LONG );
-				ra [ 7 ] -= 2;
+				ra [ 7 ] = run68_sub32(ra [ 7 ], 2);
 				mem_set( ra [ 7 ], sr, S_WORD );
 				pc = trap_adr;
 				SR_S_ON();

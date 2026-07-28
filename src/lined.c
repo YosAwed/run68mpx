@@ -43,7 +43,7 @@ int	lined( char *pc_ptr )
 
 	code1 = *(pc_ptr++);
 	code2 = *pc_ptr;
-	pc += 2;
+	pc = run68_add32(pc, 2);
 
 	if ( (code2 & 0xC0) == 0xC0 ) {
 		return( Adda( code1, code2 ) );
@@ -94,7 +94,7 @@ static	int	Adda( char code1, char code2 )
 		}
 	}
 
-	ra [ dst_reg ] += src_data;
+	ra [ dst_reg ] = (Long)((ULong)ra [ dst_reg ] + (ULong)src_data);
 
 #ifdef	TRACE
 	printf( "trace: adda.%c   src=%d PC=%06lX\n",
@@ -111,6 +111,7 @@ static	int	Addx( char code1, char code2 )
 	char	dst_reg;
 	short	save_z;
 	short	save_x;
+	Long	src_data;
 	Long	dest_data;
 
 	src_reg = (code2 & 0x07);
@@ -119,18 +120,30 @@ static	int	Addx( char code1, char code2 )
 
 	if ( (code2 & 0x08) != 0 ) {
 		/* -(An), -(An) */
-		err68a( "未定義命令を実行しました", __FILE__, __LINE__ );
-		return( TRUE );
+		if (get_data_at_ea(EA_All, EA_AIPD, src_reg, size, &src_data))
+			return TRUE;
+		if (get_data_at_ea(EA_All, EA_AIPD, dst_reg, size, &dest_data))
+			return TRUE;
+	} else {
+		src_data = rd [ src_reg ];
+		dest_data = rd [ dst_reg ];
 	}
-
-	dest_data = rd [ dst_reg ];
 
 	save_z = CCR_Z_REF() != 0 ? 1 : 0;
 	save_x = CCR_X_REF() != 0 ? 1 : 0;
-	rd [ dst_reg ] = add_long(rd [ src_reg ] + save_x, dest_data , size );
+	rd [ 8 ] = add_long(src_data, dest_data, size);
+	if (save_x)
+		rd [ 8 ] = add_long(1, rd [ 8 ], size);
+
+	if ((code2 & 0x08) != 0) {
+		if (set_data_at_ea(EA_All, EA_AI, dst_reg, size, rd [ 8 ]))
+			return TRUE;
+	} else {
+		rd [ dst_reg ] = rd [ 8 ];
+	}
 
 	/* フラグの変化 */
-	add_conditions(rd[src_reg], dest_data, rd[dst_reg], size, save_z);
+	add_conditions(src_data, dest_data, rd[8], size, save_z);
 
 #ifdef	TRACE
 	switch( size ) {
@@ -204,7 +217,7 @@ static	int	Add1( char code1, char code2 )
 	}
 
 	/* フラグの変化 */
-	sub_conditions(src_data, dest_data, rd[ 8 ], size, 1);
+	add_conditions(src_data, dest_data, rd[ 8 ], size, 1);
 
 #ifdef	TRACE
 	switch( size ) {

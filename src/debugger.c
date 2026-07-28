@@ -91,7 +91,7 @@ RUN68_COMMAND debugger(BOOL running)
         /* まず全レジスタを表示し、*/
         display_registers();
         /* 1命令分、逆アセンブルして表示する。*/
-        sprintf(hex, "$%06X ", addr);
+		snprintf(hex, sizeof(hex), "$%06X ", addr);
         if (addr == naddr)
         {
             /* ディスアセンブルできなかった */
@@ -101,7 +101,7 @@ RUN68_COMMAND debugger(BOOL running)
         {
             char *p = hex + strlen(hex);
             code = (((unsigned short)prog_ptr_u[addr]) << 8) + (unsigned short)prog_ptr_u[addr + 1];
-            sprintf(p, "%04X ", code);
+			snprintf(p, sizeof(hex) - (size_t)(p - hex), "%04X ", code);
             addr += 2;
         }
         for (j = strlen(hex); j < 34; j ++)
@@ -235,7 +235,7 @@ static RUN68_COMMAND analyze(const char *line, int *argc, char** argv)
     {
         /* 空白文字を読み飛ばす。*/
         const char *p = &line[i];
-        char c = toupper(*p++);
+        char c = (char)toupper((unsigned char)*p++);
         if (c == ' ' || c == '\t')
         {
             continue;
@@ -245,8 +245,9 @@ static RUN68_COMMAND analyze(const char *line, int *argc, char** argv)
             argv[(*argc)++] = q;
             do {
                 *q++ = c;
-                c = toupper(*p++);
-            } while('A' <= c && c <= 'Z' || '0' <= c && c <= '9' || c == '_');
+                c = (char)toupper((unsigned char)*p++);
+            } while(('A' <= c && c <= 'Z') ||
+                    ('0' <= c && c <= '9') || c == '_');
             *q++ = '\0';
             i += strlen(argv[*argc - 1]);
         } else if ('0' <= c && c <= '9')
@@ -255,20 +256,24 @@ static RUN68_COMMAND analyze(const char *line, int *argc, char** argv)
             argv[(*argc)++] = q;
             do {
                 *(q++) = c;
-                c = toupper(*p++);
+                c = (char)toupper((unsigned char)*p++);
             } while('0' <= c && c <= '9');
             *q++ = '\0';
             i += strlen(argv[*argc - 1]);
-        } else if (c == '$' && 'A' <= toupper(*p) && toupper(*p) <= 'F' || '0' <= *p && *p <= '9')
+        } else if (c == '$' &&
+                   ((('A' <= toupper((unsigned char)*p)) &&
+                     (toupper((unsigned char)*p) <= 'F')) ||
+                    ('0' <= *p && *p <= '9')))
         {
             /* 16進数は$記号を付ける。*/
             argv[(*argc)++] = q;
             *q++ = c;
-            c = toupper(*p++);
+            c = (char)toupper((unsigned char)*p++);
             do {
                 *q++ = c;
-                c = toupper(*p++);
-            } while('A' <= c && c <= 'F' || '0' <= c && c <= '9');
+                c = (char)toupper((unsigned char)*p++);
+            } while(('A' <= c && c <= 'F') ||
+                    ('0' <= c && c <= '9'));
             *q++ = '\0';
             i += strlen(argv[*argc - 1]);
         }
@@ -443,7 +448,11 @@ static void set_breakpoint(int argc, char **argv)
         fprintf(stderr, "run68-break:Address expression error.\n");
         return;
     }
-    sscanf(&argv[1][1], "%lx", &trap_pc);
+    {
+        ULong parsed = 0;
+        sscanf(&argv[1][1], "%x", &parsed);
+        trap_pc = (Long)parsed;
+    }
 }
 
 static void clear_breakpoint()
@@ -510,7 +519,7 @@ static void display_list(int argc, char **argv)
         char hex[64];
         unsigned short code;
 
-        sprintf(hex, "$%06X ", addr);
+		snprintf(hex, sizeof(hex), "$%06X ", addr);
         if (addr == naddr)
         {
             /* ディスアセンブルできなかった */
@@ -520,7 +529,7 @@ static void display_list(int argc, char **argv)
         {
             char *p = hex + strlen(hex);
             code = (((unsigned short)prog_ptr_u[addr]) << 8) + (unsigned short)prog_ptr_u[addr + 1];
-            sprintf(p, "%04X ", code);
+			snprintf(p, sizeof(hex) - (size_t)(p - hex), "%04X ", code);
             addr += 2;
         }
         for (j = strlen(hex); j < 34; j ++)
@@ -547,7 +556,7 @@ static ULong get_stepcount(int argc, char **argv)
         return 0;
     } else if (determine_string(argv[1]) == 1)
     {
-        sscanf(argv[1], "%lu", &count);
+        sscanf(argv[1], "%u", &count);
     }
     return count;
 }

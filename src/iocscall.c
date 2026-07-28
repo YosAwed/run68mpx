@@ -95,7 +95,7 @@ int iocs_call()
 			printf( "%s", data_ptr );
 #endif
 
-			ra [ 1 ] += strlen((char *)data_ptr);
+			ra [ 1 ] = run68_add32(ra [ 1 ], (Long)strlen((char *)data_ptr));
 			rd [ 0 ] = get_locate();
 			break;
 		case 0x22:	/* B_COLOR */
@@ -217,7 +217,7 @@ int iocs_call()
 				     ( mem_get( ra [ 1 ], S_BYTE ) & 0xFF ) );
 			if ( save_s == 0 )
 				SR_S_OFF();
-			ra [ 1 ] += 1;
+			ra [ 1 ] = run68_add32(ra [ 1 ], 1);
 			break;
 		case 0x83:	/* B_WPEEK */
 			save_s = SR_S_REF();
@@ -226,7 +226,7 @@ int iocs_call()
 				     ( mem_get( ra [ 1 ], S_WORD ) & 0xFFFF ) );
 			if ( save_s == 0 )
 				SR_S_OFF();
-			ra [ 1 ] += 2;
+			ra [ 1 ] = run68_add32(ra [ 1 ], 2);
 			break;
 		case 0x84:	/* B_LPEEK */
 			save_s = SR_S_REF();
@@ -234,7 +234,7 @@ int iocs_call()
 			rd [ 0 ] = mem_get( ra [ 1 ], S_LONG );
 			if ( save_s == 0 )
 				SR_S_OFF();
-			ra [ 1 ] += 4;
+			ra [ 1 ] = run68_add32(ra [ 1 ], 4);
 			break;
 		case 0x8A:	/* DMAMOVE */
 			Dmamove( rd [ 1 ], rd [ 2 ], ra [ 1 ], ra [ 2 ] );
@@ -313,7 +313,7 @@ static void Putmes()
 	text_color( (rd [ 1 ] & 0xFF) );
 	printf("%s", temp);
 
-	ra [ 1 ] += len;
+	ra [ 1 ] = run68_add32(ra [ 1 ], len);
 }
 
 /*
@@ -438,12 +438,17 @@ static Long Timebin( Long bcd )
 static Long Dateasc( Long data, Long adr )
 {
 	char	*data_ptr;
+	ULong	guest_address;
 	UShort	year;
 	UShort	month;
 	UShort	day;
 	int	form;
 
-	data_ptr = prog_ptr + adr;
+	guest_address = (ULong)adr & 0x00ffffffu;
+	if (guest_address >= (ULong)mem_aloc ||
+	    (ULong)mem_aloc - guest_address < 11u)
+		return -1;
+	data_ptr = prog_ptr + guest_address;
 
 	form = data >> 28;
 	year = ((data >> 16) & 0xFFF);
@@ -458,20 +463,20 @@ static Long Dateasc( Long data, Long adr )
 
 	switch( form ) {
 		case 0:
-			sprintf( data_ptr, "%04d/%02d/%02d", year, month, day);
-			ra [ 1 ] += 10;
+			snprintf(data_ptr, 11, "%04d/%02d/%02d", year, month, day);
+			ra [ 1 ] = run68_add32(ra [ 1 ], 10);
 			break;
 		case 1:
-			sprintf( data_ptr, "%04d-%02d-%02d", year, month, day);
-			ra [ 1 ] += 10;
+			snprintf(data_ptr, 11, "%04d-%02d-%02d", year, month, day);
+			ra [ 1 ] = run68_add32(ra [ 1 ], 10);
 			break;
 		case 2:
-			sprintf( data_ptr, "%02d/%02d/%02d", year % 100, month, day);
-			ra [ 1 ] += 8;
+			snprintf(data_ptr, 9, "%02d/%02d/%02d", year % 100, month, day);
+			ra [ 1 ] = run68_add32(ra [ 1 ], 8);
 			break;
 		case 3:
-			sprintf( data_ptr, "%02d-%02d-%02d", year % 100, month, day);
-			ra [ 1 ] += 8;
+			snprintf(data_ptr, 9, "%02d-%02d-%02d", year % 100, month, day);
+			ra [ 1 ] = run68_add32(ra [ 1 ], 8);
 			break;
 		default:
 			return( -1 );
@@ -487,11 +492,16 @@ static Long Dateasc( Long data, Long adr )
 static Long Timeasc( Long data, Long adr )
 {
 	char	*data_ptr;
+	ULong	guest_address;
 	UShort	hh;
 	UShort	mm;
 	UShort	ss;
 
-	data_ptr = prog_ptr + adr;
+	guest_address = (ULong)adr & 0x00ffffffu;
+	if (guest_address >= (ULong)mem_aloc ||
+	    (ULong)mem_aloc - guest_address < 9u)
+		return -1;
+	data_ptr = prog_ptr + guest_address;
 
 	hh = ((data >> 16) & 0xFF);
 	if ( hh < 0 || hh > 23 )
@@ -503,8 +513,8 @@ static Long Timeasc( Long data, Long adr )
 	if ( ss < 0 || ss > 59 )
 		return( -1 );
 
-	sprintf( data_ptr, "%02d:%02d:%02d", hh, mm, ss);
-	ra [ 1 ] += 8;
+	snprintf(data_ptr, 9, "%02d:%02d:%02d", hh, mm, ss);
+	ra [ 1 ] = run68_add32(ra [ 1 ], 8);
 
 	return( 0 );
 }
@@ -542,10 +552,10 @@ static void Dayasc( Long data, Long adr )
 			strcpy( data_ptr, "土" );
 			break;
 		default:
-			ra [ 1 ] -= 2;
+			ra [ 1 ] = run68_sub32(ra [ 1 ], 2);
 			break;
 	}
-	ra [ 1 ] += 2;
+	ra [ 1 ] = run68_add32(ra [ 1 ], 2);
 }
 
 /*

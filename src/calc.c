@@ -30,7 +30,7 @@
 */
 Long add_long(Long src, Long dest, int size) {
 
-	Long result;
+	Long result = 0;
 
 	switch(size) {
 		case S_BYTE:
@@ -40,7 +40,10 @@ Long add_long(Long src, Long dest, int size) {
 			result = (dest & 0xffff0000) | (((dest & 0xffff) + (src & 0xffff)) & 0xffff);
 			break;
 		case S_LONG:
-			result = dest + src;
+			result = (Long)((ULong)dest + (ULong)src);
+			break;
+		default:
+			err68a("不正なデータサイズです。", __FILE__, __LINE__);
 			break;
 	}
 
@@ -53,7 +56,7 @@ Long add_long(Long src, Long dest, int size) {
 */
 Long sub_long(Long src, Long dest, int size) {
 
-	Long result;
+	Long result = 0;
 
 	switch(size) {
 		case S_BYTE:
@@ -63,7 +66,10 @@ Long sub_long(Long src, Long dest, int size) {
 			result = (dest & 0xffff0000) | (((dest & 0xffff) - (src & 0xffff)) & 0xffff);
 			break;
 		case S_LONG:
-			result = dest - src;
+			result = (Long)((ULong)dest - (ULong)src);
+			break;
+		default:
+			err68a("不正なデータサイズです。", __FILE__, __LINE__);
 			break;
 	}
 

@@ -70,9 +70,17 @@
   #include <dos.h>
   #include <direct.h>
   #include <io.h>
-#elif defined(__APPLE__) || defined(__EMSCRIPTEN__)
+#elif defined(__APPLE__) || defined(__linux__)
   #include <time.h>
   #include <dirent.h>
+  #include <sys/select.h>
+  #include <sys/statvfs.h>
+  #include <termios.h>
+  #include <unistd.h>
+#elif defined(__EMSCRIPTEN__)
+  #include <time.h>
+  #include <dirent.h>
+  #include <unistd.h>
 #else
   #include <time.h>
   #include <dirent.h>
@@ -131,90 +139,210 @@ static Long Exec01( Long, Long, Long, int );
 static Long Exec2( Long, Long, Long );
 static Long Exec3( Long, Long, Long );
 static void Exec4( Long );
+#if defined(DOSX)
 static void get_jtime( UShort *, UShort *, int );
+#endif
 static Long gets2( char *, int );
 
 Long Getenv_common(const char *name_p, char *buf_p);
 
-#if defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
+#if defined(__APPLE__) || defined(__linux__)
 void CloseHandle( FILE* fp ) {
 	fclose( fp );
 }
 int CreateDirectoryA(char * name, void* ptr) {
-	printf("CreateDirectoryA(\"%s\")\n", name);
-	return 1;
+	(void)ptr;
+	return mkdir(name, 0777) == 0;
 }
 
 int RemoveDirectoryA(char * name) {
-	printf("RemoveDirectoryA(\"%s\")\n", name);
-	return 1;
+	return rmdir(name) == 0;
 }
 
 int SetCurrentDirectory(char * name) {
-	printf("SetCurrentDirectory(\"%s\")\n", name);
-	return 1;
+	return chdir(name) == 0;
 }
 
 int _dos_getfileattr( char* name, void *ret ) {
-	printf("_dos_getfileattr(\"%s\")\n", name);
+	struct stat info;
+	ULong attributes = 0;
+	const char *base;
 
-	return 1;
-}
+	if (stat(name, &info) != 0)
+		return errno == 0 ? -1 : errno;
+	if (S_ISDIR(info.st_mode))
+		attributes |= 0x10;
+	else
+		attributes |= 0x20;
+	if ((info.st_mode & S_IWUSR) == 0)
+		attributes |= 0x01;
+	base = strrchr(name, '/');
+	base = base == NULL ? name : base + 1;
+	if (base[0] == '.' && base[1] != '\0')
+		attributes |= 0x02;
 
-int _dos_setfileattr( char* name, short attr ) {
-	printf("_dos_setfileattr(\"%s\", %d)\n", name, attr);
-
-	return 1;
-}
-
-int _dos_write( FILE* fp, void* data, int size, size_t *res ) {
-	printf("_dos_write()\n" );
-	*res = fwrite(data, size, 1, fp);
+	*(ULong *)ret = attributes;
 	return 0;
 }
 
-void _flushall()
-{
-//	printf("_flushall()\n" );
+int _dos_setfileattr( char* name, short attr ) {
+	struct stat info;
+	mode_t mode;
+
+	if (stat(name, &info) != 0)
+		return errno == 0 ? -1 : errno;
+	mode = info.st_mode;
+	if ((attr & 0x01) != 0)
+		mode &= (mode_t)~(S_IWUSR | S_IWGRP | S_IWOTH);
+	else
+		mode |= S_IWUSR;
+	return chmod(name, mode) == 0 ? 0 : (errno == 0 ? -1 : errno);
 }
 
-char _getch()
-{
-	printf("_getch()\n" );
-	return getchar();
+int _dos_write( int fd, const void* data, unsigned size, unsigned *res ) {
+	ssize_t written = write(fd, data, size);
+	if (written < 0) {
+		*res = 0;
+		return errno == 0 ? -1 : errno;
+	}
+	*res = (unsigned)written;
+	return 0;
 }
 
-char _getche()
+void _flushall(void)
 {
-	printf("_getche()\n" );
-	return getchar();
+	fflush(NULL);
 }
 
+static int console_pushback = EOF;
+
+static int read_console_char(int echo)
+{
+	struct termios original;
+	struct termios raw;
+	int result;
+
+	if (console_pushback != EOF) {
+		result = console_pushback;
+		console_pushback = EOF;
+		return result;
+	}
+	if (!isatty(STDIN_FILENO) || tcgetattr(STDIN_FILENO, &original) != 0)
+		return getchar();
+	raw = original;
+	raw.c_lflag &= (tcflag_t)~ICANON;
+	if (echo)
+		raw.c_lflag |= ECHO;
+	else
+		raw.c_lflag &= (tcflag_t)~ECHO;
+	raw.c_cc[VMIN] = 1;
+	raw.c_cc[VTIME] = 0;
+	if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0)
+		return getchar();
+	result = getchar();
+	(void)tcsetattr(STDIN_FILENO, TCSANOW, &original);
+	return result;
+}
+
+char _getch(void)
+{
+	return (char)read_console_char(FALSE);
+}
+
+char _getche(void)
+{
+	return (char)read_console_char(TRUE);
+}
 void dos_getdrive(Long *drv) {
-//	printf("dos_getdrive(%p)\n", drv );
 	*drv = 1;	// 1 = A:
 }
 
 void dos_setdrive(Long drv, Long* dmy) {
-//	printf("dos_setdrive(%d, %p)\n", drv, dmy );
+	(void)drv;
+	(void)dmy;
 }
 
-int _kbhit()
+int kbhit(void)
 {
-//	printf("_kbhit()\n");
-	return 1;
+	fd_set read_set;
+	struct timeval timeout = {0, 0};
+
+	if (console_pushback != EOF)
+		return 1;
+	FD_ZERO(&read_set);
+	FD_SET(STDIN_FILENO, &read_set);
+	return select(STDIN_FILENO + 1, &read_set, NULL, NULL, &timeout) > 0;
 }
 
-int kbhit()
+int _kbhit(void)
 {
-//	printf("kbhit()\n");
-	return 1;
+	return kbhit();
 }
 
 char ungetch(char c)
 {
-	printf("ungetch()\n");	
+	if (console_pushback != EOF)
+		return 0;
+	console_pushback = (unsigned char)c;
+	return c;
+}
+#elif defined(__EMSCRIPTEN__)
+void CloseHandle(FILE *fp) { fclose(fp); }
+int CreateDirectoryA(char *name, void *ptr)
+{
+	(void)ptr;
+	return mkdir(name, 0777) == 0;
+}
+int RemoveDirectoryA(char *name) { return rmdir(name) == 0; }
+int SetCurrentDirectory(char *name) { return chdir(name) == 0; }
+int _dos_getfileattr(char *name, void *ret)
+{
+	struct stat info;
+	ULong attributes = 0;
+
+	if (stat(name, &info) != 0)
+		return errno == 0 ? -1 : errno;
+	attributes = S_ISDIR(info.st_mode) ? 0x10 : 0x20;
+	if ((info.st_mode & S_IWUSR) == 0)
+		attributes |= 0x01;
+	*(ULong *)ret = attributes;
 	return 0;
+}
+int _dos_setfileattr(char *name, short attr)
+{
+	struct stat info;
+	mode_t mode;
+
+	if (stat(name, &info) != 0)
+		return errno == 0 ? -1 : errno;
+	mode = info.st_mode;
+	if ((attr & 0x01) != 0)
+		mode &= (mode_t)~(S_IWUSR | S_IWGRP | S_IWOTH);
+	else
+		mode |= S_IWUSR;
+	return chmod(name, mode) == 0 ? 0 : (errno == 0 ? -1 : errno);
+}
+int _dos_write(int fd, const void *data, unsigned size, unsigned *res)
+{
+	ssize_t written = write(fd, data, size);
+	if (written < 0) {
+		*res = 0;
+		return errno == 0 ? -1 : errno;
+	}
+	*res = (unsigned)written;
+	return 0;
+}
+void _flushall(void) { fflush(NULL); }
+char _getch(void) { return (char)getchar(); }
+char _getche(void) { return (char)getchar(); }
+int _kbhit(void) { return 1; }
+int kbhit(void) { return 1; }
+char ungetch(char c) { return ungetc((unsigned char)c, stdin) == EOF ? 0 : c; }
+void dos_getdrive(Long *drv) { *drv = 1; }
+void dos_setdrive(Long drv, Long *dmy)
+{
+	(void)drv;
+	(void)dmy;
 }
 #endif
 
@@ -242,7 +370,7 @@ int dos_call( UChar code )
 	DWORD st;
 #endif
 	if (func_trace_f) {
-		printf( "$%06x FUNC(%02X):", pc-2, code);
+		printf( "$%06x FUNC(%02X):", run68_sub32(pc, 2), code);
 	}
 	stack_adr = ra [ 7 ];
 	if ( code >= 0x80 && code <= 0xAF )
@@ -349,10 +477,25 @@ int dos_call( UChar code )
 		}
 		rd [ 0 ] = c;
 		break;
-	  case 0x09:    /* PRINT */
+	  case 0x09: {  /* PRINT */
+		ULong print_address;
+		const char *terminator;
+		size_t available;
+
 		data = mem_get( stack_adr, S_LONG );
-		data_ptr = prog_ptr + data;
-		len = strlen( data_ptr );
+		print_address = (ULong)data & 0x00ffffffu;
+		if (print_address >= (ULong)mem_aloc) {
+			rd [ 0 ] = -1;
+			break;
+		}
+		available = (size_t)((ULong)mem_aloc - print_address);
+		data_ptr = prog_ptr + print_address;
+		terminator = memchr(data_ptr, '\0', available);
+		if (terminator == NULL) {
+			rd [ 0 ] = -1;
+			break;
+		}
+		len = (Long)(terminator - data_ptr);
 		if (func_trace_f) {
 			printf("%-10s str=%s\n", "PRINT", data_ptr);
 		}
@@ -369,24 +512,28 @@ int dos_call( UChar code )
 		_dos_write( fileno(finfo[ 1 ].fh), data_ptr,
 					(unsigned)len, &drv );
 #elif defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
-//		_dos_write( fileno(finfo[ 1 ].fh), data_ptr, (unsigned)len, &drv );
 #if defined (USE_ICONV)
 	{
-		// SJIS to UTF-8
-		char utf8_buf[8192];
+		size_t capacity = (size_t)len * 4u + 1u;
+		char *utf8_buf = malloc(capacity);
 		iconv_t icd = iconv_open("UTF-8", "Shift_JIS");
-		size_t inbytes = strlen(data_ptr);
-		size_t outbytes = sizeof(utf8_buf) - 1;
+		size_t inbytes = (size_t)len;
+		size_t outbytes = capacity - 1u;
 		char *ptr_in = data_ptr;
 		char *ptr_out = utf8_buf;
-		memset(utf8_buf, 0x00, sizeof(utf8_buf));
-		iconv(icd, &ptr_in, &inbytes, &ptr_out, &outbytes);
-		iconv_close(icd);
 
-		printf("%s", utf8_buf);
+		if (utf8_buf != NULL && icd != (iconv_t)-1 &&
+		    iconv(icd, &ptr_in, &inbytes, &ptr_out, &outbytes) != (size_t)-1) {
+			fwrite(utf8_buf, 1, (size_t)(ptr_out - utf8_buf), finfo [ 1 ].fh);
+		} else {
+			fwrite(data_ptr, 1, (size_t)len, finfo [ 1 ].fh);
+		}
+		if (icd != (iconv_t)-1)
+			iconv_close(icd);
+		free(utf8_buf);
 	}
 #else
-	printf("%s", data_ptr);
+	fwrite(data_ptr, 1, (size_t)len, finfo [ 1 ].fh);
 #endif
 #else
 		printf("DOSCALL:PRINT not implemented yet.\n");
@@ -394,6 +541,7 @@ int dos_call( UChar code )
 		/* printf( "%s", data_ptr ); */
 		rd [ 0 ] = 0;
 		break;
+	  }
 	  case 0x0A:     /* GETS */
 		buf = mem_get( stack_adr, S_LONG );
 		if (func_trace_f) {
@@ -443,7 +591,7 @@ int dos_call( UChar code )
 		{
 			char drv[3];
 			BOOL b;
-			sprintf(drv, "%c:", srt+'A');
+			snprintf(drv, sizeof(drv), "%c:", srt+'A');
 			/* Win32 API */
 			b = SetCurrentDirectory(drv);
 			if (b) {
@@ -1088,7 +1236,7 @@ int dos_call( UChar code )
 		if (func_trace_f) {
 			printf("%-10s adr=$%08X\n", "SUPER_JSR", data);
 		}
-		ra [ 7 ] -= 4;
+		ra [ 7 ] = run68_sub32(ra [ 7 ], 4);
 		mem_set( ra [ 7 ], pc, S_LONG );
 		if ( SR_S_REF() == 0 ) {
 			superjsr_ret = pc;
@@ -1098,6 +1246,7 @@ int dos_call( UChar code )
 		break;
 	  case 0x4C:    /* EXIT2 */
 		srt = (short)mem_get( stack_adr, S_WORD );
+		/* fall through: EXIT2 shares the EXIT cleanup path. */
 	  case 0x00:    /* EXIT */
 		if (func_trace_f) {
 			printf("%-10s\n", code == 0x4C ? "EXIT2" : "EXIT");
@@ -1151,8 +1300,9 @@ int dos_call( UChar code )
 		pc =       nest_pc [ nest_cnt ];
 		ra [ 7 ] = nest_sp [ nest_cnt ];
 		rd [ 0 ] = (UShort)srt;
+		break;
 
-		case 0xf7:	// BUS_ERR
+	  case 0xf7:	// BUS_ERR
 		{
 			short size  = (short)mem_get( stack_adr, S_WORD );	// アクセスサイズ
 			Long r_ptr  = mem_get( stack_adr + 2, S_LONG );
@@ -1168,6 +1318,7 @@ int dos_call( UChar code )
 		if (func_trace_f) {
 			printf("%-10s code=0xFF%02X\n", "????????", code );
 		}
+		rd [ 0 ] = -1;
 		break;
 	}
 	return( FALSE );
@@ -1451,7 +1602,7 @@ static Long Mfree( Long adr )
  */
 static Long Dskfre( short drv, Long buf )
 {
-	Long disksize;
+	Long disksize = 0;
 #if defined(WIN32)
 	BOOL b;
 	ULong SectorsPerCluster, BytesPerSector,
@@ -1494,6 +1645,27 @@ static Long Dskfre( short drv, Long buf )
 	disksize = dspace.avail_clusters *
 		dspace.sectors_per_cluster *
 		dspace.bytes_per_sector;
+#elif defined(__APPLE__) || defined(__linux__)
+	struct statvfs space;
+	ULong bytes_per_sector = 512;
+	ULong sectors_per_cluster;
+	ULong free_clusters;
+	ULong total_clusters;
+
+	if (drv < 0 || drv > 1 || statvfs(".", &space) != 0)
+		return -15;
+	sectors_per_cluster = (ULong)(space.f_frsize / bytes_per_sector);
+	if (sectors_per_cluster == 0)
+		sectors_per_cluster = 1;
+	free_clusters = (ULong)space.f_bavail & 0xffffu;
+	total_clusters = (ULong)space.f_blocks & 0xffffu;
+	sectors_per_cluster &= 0xffffu;
+
+	mem_set(buf,     (Long)free_clusters, S_WORD);
+	mem_set(buf + 2, (Long)total_clusters, S_WORD);
+	mem_set(buf + 4, (Long)sectors_per_cluster, S_WORD);
+	mem_set(buf + 6, (Long)bytes_per_sector, S_WORD);
+	disksize = (Long)(free_clusters * sectors_per_cluster * bytes_per_sector);
 #endif
 	return disksize;
 }
@@ -2221,9 +2393,9 @@ static Long Curdir( short drv, char *buf_ptr )
 	if ( drv != 0 ) { /* カレントドライブでなかったら */
 		/* まず、カレントディレクトリを取得して保存しておく。*/
 		b = GetCurrentDirectory(sizeof(cpath), cpath);
-		sprintf(cdrv, "%c:", cpath[0]);
+		snprintf(cdrv, sizeof(cdrv), "%c:", cpath[0]);
 		/* 次に、カレントドライブを変更する。*/
-		sprintf(tdrv, "%c:", drv+'A'-1);
+		snprintf(tdrv, sizeof(tdrv), "%c:", drv+'A'-1);
 		b = SetCurrentDirectory(tdrv);
 		if (b == FALSE) {
 			/* ドライブの変更に失敗した。*/
@@ -2567,8 +2739,40 @@ static Long Nfiles( Long buf )
  */
 static Long Filedate( short hdl, Long dt )
 {
-#if defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
-	printf("DOSCALL FILEDATE:not defined yet %s %d\n", __FILE__, __LINE__ );
+#if defined(__APPLE__) || defined(__linux__)
+	int fd;
+	struct stat info;
+	ULong packed;
+
+	if (hdl < 0 || hdl >= FILE_MAX || finfo[hdl].fh == NULL)
+		return -6;
+	fd = fileno(finfo[hdl].fh);
+	if (fd < 0)
+		return -6;
+
+	if (dt != 0) {
+		struct timespec times[2];
+		time_t timestamp;
+
+		if (run68_unpack_dos_datetime((ULong)dt, &timestamp) == FALSE)
+			return -19;
+		times[0].tv_sec = 0;
+		times[0].tv_nsec = UTIME_OMIT;
+		times[1].tv_sec = timestamp;
+		times[1].tv_nsec = 0;
+		if (futimens(fd, times) != 0)
+			return -19;
+		return 0;
+	}
+
+	if (fstat(fd, &info) != 0 ||
+	    run68_pack_dos_datetime(info.st_mtime, &packed) == FALSE)
+		return -1;
+	return (Long)packed;
+#elif defined(__EMSCRIPTEN__)
+	(void)hdl;
+	(void)dt;
+	return -1;
 #else
 #if defined(WIN32)
 	FILETIME ctime, atime, wtime;
@@ -3526,6 +3730,7 @@ static void Exec4( Long adr )
  　機能：標準時間を日本時間に変換する
  戻り値：なし
  */
+#if defined(DOSX)
 static void get_jtime( UShort *d, UShort *t, int offset )
 {
 	static int month_day [ 13 ] = {
@@ -3584,6 +3789,7 @@ static void get_jtime( UShort *d, UShort *t, int offset )
 	else
 		*d = (*d & 0xFE1F) - 0x200 + 0x180;    /* 前年12月 */
 }
+#endif
 
 /*
  　機能：getsの代わりをする
