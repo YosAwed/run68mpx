@@ -42,10 +42,23 @@ Human68k の実行ファイル（`.x` / `.r`）を macOS などのターミナ�
 - DOS形式の日時とPOSIXの更新日時を相互変換し、`FILEDATE`の取得・設定に対応
 - コンソール入力、ファイルI/O、文字列処理で、バッファ境界やホストAPIのエラー処理を強化
 
+### CLI向けDOSCALL／IOCSCALL
+
+- DOSCALLの`PUTCHAR`、`KEYSNS`、`KFLUSH`、`KEYCTRL`の先読み、`CURDRV`をPOSIX端末で動作するよう修正
+- `GETDATE`／`SETDATE`と`GETTIME`／`SETTIM2`を仮想RTCへ接続。ゲストから日時を変更してもMac本体のシステム時計は変更しない
+- IOCSの`B_KEYINP`、`B_KEYSNS`、`B_SFTSNS`、`KEY_INIT`を標準入力へ接続し、通常キーのX68000スキャンコードを返す
+- `B_CURON`、`B_CUROFF`、`B_UP`、`B_DOWN`、`B_RIGHT`、`B_LEFT`、`B_CLR_ST`、`B_ERA_ST`、`B_INS`、`B_DEL`をANSIエスケープシーケンスで実装
+- `DATEBCD`、`DATESET`、`TIMEBCD`、`TIMESET`、`DATECNV`、`TIMECNV`を実装し、既存の`DATEGET`／`TIMEGET`のBCD形式と月計算を修正
+- `ONTIME`を単調時計によるエミュレータ起動後の1/100秒カウンタとして実装
+- `B_MEMSTR`、`B_BPOKE`、`B_WPOKE`、`B_LPOKE`、`B_MEMSET`を実装し、アドレスレジスタと転送カウンタもIOCS仕様に従って更新
+- `DMAMOVE`の固定／増加／減少アドレスと両方向転送に対応し、ゲストメモリ境界検査を経由するよう安全化
+
+VRAM、音源、物理ディスク、シリアル、マウスなど実機ハードウェアを必要とするIOCSCALLは、このCLI対応の対象外です。
+
 ### ビルドと品質確認
 
 - Apple Silicon／Intel macOSおよびLinuxを対象にしたCI構成へ更新
-- CTestによる16系統の回帰テストを追加し、CPU命令、例外、メモリ、ローダ、DOSファイル検索を検証
+- CTestによる17系統の回帰テストを追加し、CPU命令、例外、メモリ、ローダ、DOSファイル検索、CLI向けIOCSを検証
 - AddressSanitizer／UndefinedBehaviorSanitizerを有効にできる `RUN68_ENABLE_SANITIZERS` オプションを追加
 - コンパイラ警告を強化し、現在のバージョン表示を `0.10.0` に更新
 

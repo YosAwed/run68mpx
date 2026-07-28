@@ -325,6 +325,10 @@ FILE	*prog_open(char *, int ) ;
 Long	prog_read( FILE *, char *, Long, Long *, Long *, int ) ;
 BOOL	run68_pack_dos_datetime( time_t, ULong * );
 BOOL	run68_unpack_dos_datetime( ULong, time_t * );
+BOOL	run68_get_virtual_localtime( struct tm * );
+BOOL	run68_set_virtual_date( int, int, int );
+BOOL	run68_set_virtual_time( int, int, int );
+uint64_t run68_elapsed_centiseconds( void );
 int	make_psp( char *, Long, Long, Long, Long ) ;
 
 /* exec.c */
@@ -358,6 +362,12 @@ int	dos_call( UChar ) ;
 
 /* iocscall.c */
 int	iocs_call( void ) ;
+
+/* hostconsole.c */
+int	run68_console_getch( BOOL );
+int	run68_console_kbhit( void );
+BOOL	run68_console_ungetch( int );
+void	run68_console_flush_input( void );
 
 /* key.c */
 void	get_fnckey( int, char * ) ;
