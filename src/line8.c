@@ -51,7 +51,7 @@ int	line8( char *pc_ptr )
 
 	code1 = *(pc_ptr++);
 	code2 = *pc_ptr;
-	pc += 2;
+	pc = run68_add32(pc, 2);
 
 	if ( (code2 & 0xC0) == 0xC0 ) {
 		if ( (code1 & 0x01) == 0 )
@@ -190,12 +190,12 @@ static	int	Divu( char code1, char code2 )
 
 	CCR_C_OFF();
 	ans = data / waru;
-	mod = (unsigned char)(data % waru);
+	mod = (UShort)(data % waru);
 	if ( ans > 0xFFFF ) {
 		CCR_V_ON();
 		return( FALSE );
 	}
-	rd [ dst_reg ] = ((mod << 16) | ans);
+	rd [ dst_reg ] = (Long)(((ULong)mod << 16) | ans);
 
 	CCR_V_OFF();
 	if ( ans >= 0x8000 ) {
@@ -223,8 +223,8 @@ static	int	Divs( char code1, char code2 )
 	char	dst_reg;
 	short	waru;
 	Long	data;
-	Long	ans;
-	short	mod;
+	int64_t	ans;
+	int64_t	mod;
 	Long	save_pc;
 	Long	waru_l;
 
@@ -247,13 +247,14 @@ static	int	Divs( char code1, char code2 )
 	}
 
 	CCR_C_OFF();
-	ans = data / waru;
-	mod = data % waru;
+	ans = (int64_t)data / (int64_t)waru;
+	mod = (int64_t)data % (int64_t)waru;
 	if ( ans > 32767 || ans < -32768 ) {
 		CCR_V_ON();
 		return( FALSE );
 	}
-	rd [ dst_reg ] = ((mod << 16) | (ans & 0xFFFF));
+	rd [ dst_reg ] = (Long)(((ULong)(UShort)mod << 16) |
+	                        (ULong)(UShort)ans);
 
 	CCR_V_OFF();
 	if ( ans < 0 ) {

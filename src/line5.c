@@ -32,6 +32,11 @@ static	int	Scc( char, char );
 static	int	Addq( char, char );
 static	int	Subq( char, char );
 
+static void add_to_pc(Long displacement)
+{
+	pc = (Long)((ULong)pc + (ULong)displacement);
+}
+
 /*
  　機能：5ライン命令を実行する
  戻り値： TRUE = 実行終了
@@ -43,7 +48,7 @@ int	line5( char *pc_ptr )
 
 	code1 = *(pc_ptr++);
 	code2 = *pc_ptr;
-	pc += 2;
+	add_to_pc(2);
 
 	if ( (code2 & 0xC0) == 0xC0 ) {
 		if ( (code2 & 0x38) == 0x08 )
@@ -73,7 +78,7 @@ static	int	Dbcc( char code1, char code2 )
 	src_data = (rd [ reg ] & 0xFFFF);
 
 #ifdef	TRACE
-	printf( "trace: dbcc     src=%d PC=%06lX\n", (short)src_data, pc - 2 );
+	printf( "trace: dbcc     src=%d PC=%06lX\n", (short)src_data, run68_sub32(pc, 2) );
 #endif
 
 	if ( (BOOL)get_cond( (char)(code1 & 0x0F) ) == TRUE )
@@ -82,7 +87,7 @@ static	int	Dbcc( char code1, char code2 )
 	src_data --;
 	rd [ reg ] = ((rd [ reg ] & 0xFFFF0000) | src_data);
 	if ( src_data != 0xFFFF )
-		pc += (disp - 2);
+		add_to_pc((Long)disp - 2);
 
 	return( FALSE );
 }

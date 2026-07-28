@@ -73,9 +73,16 @@ static	int	Not( char );
 static	int	Jmp( char, char );
 static	int	Jsr( char );
 static	int	Trap( char );
+static	int	EnterException( int );
 static	int	Rte( void );
 static	int	Rts( void );
+static	int	Rtr( void );
 static	int	Nbcd( char );
+
+static Long adjust_address(Long address, Long delta)
+{
+	return (Long)((ULong)address + (ULong)delta);
+}
 
 #if defined(DEBUG_JSR)
 static int sub_level = 0;
@@ -92,7 +99,7 @@ int	line4( char *pc_ptr )
 	char	code1, code2;
 	code1 = *(pc_ptr++);
 	code2 = *pc_ptr;
-	pc += 2;
+	pc = adjust_address(pc, 2);
 
 	/* lea */
 	if ( (code1 & 0x01) == 0x01 && (code2 & 0xC0) == 0xC0 )
@@ -162,11 +169,12 @@ int	line4( char *pc_ptr )
 			if ( code2 == 0x75 )
 				return( Rts() );
 			if ( code2 == 0x76 ) {
-				err68a( "TRAPV命令を実行しました", __FILE__, __LINE__ );
-				return( TRUE );
+				if (CCR_V_REF() != 0)
+					return EnterException(7);
+				return FALSE;
 			}
 			if ( code2 == 0x77 )
-				;	/* rtr */
+				return Rtr();
 			if ( (code2 & 0xF8) == 0x50 )
 				return( Link( code2 ) );
 			if ( (code2 & 0xF8) == 0x58 )
@@ -228,13 +236,13 @@ static	int	Link( char code )
 	reg = (code & 0x07);
 	len = (short)imi_get( S_WORD );
 
-	ra [ 7 ] -= 4;
+	ra [ 7 ] = adjust_address(ra [ 7 ], -4);
 	mem_set( ra [ 7 ], ra [ reg ], S_LONG );
 	ra [ reg ] = ra [ 7 ];
-	ra [ 7 ] += len;
+	ra [ 7 ] = adjust_address(ra [ 7 ], len);
 
 #ifdef	TRACE
-	printf( "trace: link     len=%d PC=%06lX\n", len, pc - 2 );
+	printf( "trace: link     len=%d PC=%06lX\n", len, adjust_address(pc, -2) );
 #endif
 
 	return( FALSE );
@@ -253,7 +261,7 @@ static	int	Unlk( char code )
 
 	ra [ 7 ] = ra [ reg ];
 	ra [ reg ] = mem_get( ra [ 7 ], S_LONG );
-	ra [ 7 ] += 4;
+	ra [ 7 ] = adjust_address(ra [ 7 ], 4);
 
 #ifdef	TRACE
 	printf( "trace: unlk     PC=%06lX\n", pc );
@@ -361,7 +369,7 @@ static	int	Pea( char code )
 		return(TRUE);
 	}
 
-	ra [ 7 ] -= 4;
+	ra [ 7 ] = adjust_address(ra [ 7 ], -4);
 	mem_set( ra [ 7 ], data, S_LONG );
 
 #ifdef	TRACE
@@ -384,9 +392,10 @@ static	int	Movem_f( char code )
 	char	size;
 	char	size2;
 	short	rlist;
-	short	mask = 1;
+	UShort	mask = 1;
 	short	disp = 0;
 	Long	save_pc;
+	Long	initial_address;
 	int		i;
 	int		work_mode;
 
@@ -414,23 +423,25 @@ static	int	Movem_f( char code )
 	if (get_ea(save_pc, EA_PreDecriment, work_mode, reg, &mem_adr)) {
 		return(TRUE);
 	}
+	initial_address = ra [ reg ];
 
 	if (mode == MD_AIPD) {
 
 		// アドレスレジスタの退避
 		for ( i = 7; i >= 0; i--, mask <<= 1 ) {
 			if ( (rlist & mask) != 0 ) {
-				ra [ reg ] -= size2;
-				mem_adr -= size2;
-				mem_set( mem_adr, ra [ i ] , size );
+				ra [ reg ] = adjust_address(ra [ reg ], -size2);
+				mem_adr = adjust_address(mem_adr, -size2);
+				mem_set( mem_adr,
+				         i == reg ? initial_address : ra [ i ], size );
 			}
 		}
 
 		// データレジスタの退避
 		for ( i = 7; i >= 0; i--, mask <<= 1 ) {
 			if ( (rlist & mask) != 0 ) {
-				ra [ reg ] -= size2;
-				mem_adr -= size2;
+				ra [ reg ] = adjust_address(ra [ reg ], -size2);
+				mem_adr = adjust_address(mem_adr, -size2);
 				mem_set( mem_adr, rd [ i ] , size );
 			}
 		}
@@ -441,7 +452,7 @@ static	int	Movem_f( char code )
 		for ( i = 0; i <= 7; i++, mask <<= 1 ) {
 			if ( (rlist & mask) != 0 ) {
 				mem_set( mem_adr, rd [ i ] , size );
-				mem_adr += size2;
+				mem_adr = adjust_address(mem_adr, size2);
 			}
 		}
 
@@ -449,7 +460,7 @@ static	int	Movem_f( char code )
 		for ( i = 0; i <= 7; i++, mask <<= 1 ) {
 			if ( (rlist & mask) != 0 ) {
 				mem_set( mem_adr, ra [ i ] , size );
-				mem_adr += size2;
+				mem_adr = adjust_address(mem_adr, size2);
 			}
 		}
 
@@ -475,7 +486,7 @@ static	int	Movem_t( char code )
 	char	size;
 	char	size2;
 	short	rlist;
-	short	mask = 1;
+	UShort	mask = 1;
 	Long	save_pc;
 	int		i;
 	int		work_mode;
@@ -521,9 +532,7 @@ static	int	Movem_t( char code )
 			} else {
 				rd [ i ] = mem_get( mem_adr, S_LONG );
 			}
-			if ( mode == MD_AIPI )
-				ra [ reg ] += size2;
-			mem_adr += size2;
+			mem_adr = adjust_address(mem_adr, size2);
 		}
 	}
 
@@ -540,11 +549,13 @@ static	int	Movem_t( char code )
 			} else {
 				ra [ i ] = mem_get( mem_adr, S_LONG );
 			}
-			if ( mode == MD_AIPI )
-				ra [ reg ] += size2;
-			mem_adr += size2;
+			mem_adr = adjust_address(mem_adr, size2);
 		}
 	}
+
+	/* ベースレジスタも転送リストに含められるため、更新は全転送後に行う */
+	if (mode == MD_AIPI)
+		ra [ reg ] = mem_adr;
 
 #ifdef	TRACE
 	printf( "trace: movemt.%c PC=%06lX\n", size_char [ size ], save_pc );
@@ -568,9 +579,8 @@ static	int	Move_f_sr( char code )
 	mode = ((code & 0x38) >> 3);
 	reg = (code & 0x07);
 
-	/* ディスティネーションのアドレッシングモードに応じた処理 */
-	// ※アクセス権限がEA_ALLになっているが、これは後でチェックの必要がある
-	if (set_data_at_ea(EA_All, mode, reg, S_WORD, (Long)sr)) {
+	/* MOVE SR,<ea> permits only data-alterable destinations. */
+	if (set_data_at_ea(EA_VariableData, mode, reg, S_WORD, (Long)sr)) {
 		return(TRUE);
 	}
 
@@ -602,9 +612,8 @@ static	int	Move_t_sr( char code )
 		return( TRUE );
 	}
 
-	/* ソースのアドレッシングモードに応じた処理 */
-	// ※アクセス権限がEA_ALLになっているが、これは後でチェックの必要がある
-	if (get_data_at_ea(EA_All, mode, reg, S_WORD, &data)) {
+	/* MOVE <ea>,SR accepts data addressing modes, including immediate. */
+	if (get_data_at_ea(EA_Data, mode, reg, S_WORD, &data)) {
 		return(TRUE);
 	}
 
@@ -637,11 +646,6 @@ static	int	Move_f_usp( char code )
 	printf( "trace: move_f_usp PC=%06lX\n", pc );
 #endif
 
-	if ( usp == 0 ) {
-		err68( "MOVE FROM USP命令を実行しました" );
-		return( TRUE );
-	}
-
 	ra [ reg ] = usp;
 
 	return( FALSE );
@@ -667,8 +671,8 @@ static	int	Move_t_usp( char code )
 	printf( "trace: move_t_usp PC=%06lX\n", pc );
 #endif
 
-	err68( "MOVE TO USP命令を実行しました" );
-	return( TRUE );
+	usp = ra [ reg ];
+	return( FALSE );
 }
 
 /*
@@ -687,9 +691,8 @@ static	int	Move_t_ccr( char code )
 	mode = ((code & 0x38) >> 3);
 	reg = (code & 0x07);
 
-	/* ソースのアドレッシングモードに応じた処理 */
-	// ※アクセス権限がEA_ALLになっているが、これは後でチェックの必要がある
-	if (get_data_at_ea(EA_All, mode, reg, S_WORD, &data)) {
+	/* MOVE <ea>,CCR has the same data-source addressing set. */
+	if (get_data_at_ea(EA_Data, mode, reg, S_WORD, &data)) {
 		return(TRUE);
 	}
 
@@ -715,7 +718,7 @@ static	int	Swap( char code )
 
 	reg = (code & 0x07);
 	data = ((rd [ reg ] >> 16) & 0xFFFF);
-	data2 = ((rd [ reg ] & 0xFFFF) << 16);
+	data2 = (Long)(((ULong)rd [ reg ] & 0xffffu) << 16);
 	data |= data2;
 	rd [ reg ] = data;
 
@@ -916,7 +919,9 @@ static	int	Negx( char code )
 	save_z = CCR_Z_REF() != 0 ? 1 : 0;
 
 	/* NEG演算 */
-	dest_data = sub_long(data + save_x, 0, size);
+	dest_data = sub_long(data, 0, size);
+	if (save_x)
+		dest_data = sub_long(1, dest_data, size);
 
 	/* アドレッシングモードがプレデクリメント間接の場合は間接でデータの設定 */
 	if (mode == EA_AIPD) {
@@ -1016,7 +1021,7 @@ static	int	Jmp( char code1, char code2 )
 
 	/* アドレッシングモードに応じた処理 */
 	// ※アクセス権限がEA_ALLになっているが、これは後でチェックの必要がある
-	if (get_ea(save_pc, EA_All, mode, reg, &pc)) {
+	if (get_ea(save_pc, EA_Control, mode, reg, &pc)) {
 		return(TRUE);
 	}
 
@@ -1045,11 +1050,11 @@ static	int	Jsr( char code )
 
 	/* アドレッシングモードに応じた処理 */
 	// ※アクセス権限がEA_ALLになっているが、これは後でチェックの必要がある
-	if (get_ea(save_pc, EA_All, mode, reg, &data)) {
+	if (get_ea(save_pc, EA_Control, mode, reg, &data)) {
 		return(TRUE);
 	}
 
-	ra [ 7 ] -= 4;
+	ra [ 7 ] = adjust_address(ra [ 7 ], -4);
 	mem_set( ra [ 7 ], pc, S_LONG );
 	pc = data;
 
@@ -1067,26 +1072,25 @@ static	int	Jsr( char code )
 */
 static	int	Trap( char code )
 {
-	int vector;
+	int trap_number = (unsigned char)code & 0x0f;
 
-	if ( (code & 0x0F) == 15 ) {
+	if (trap_number == 15) {
 		return( iocs_call() );
-	} else if (((code & 0x0f) >= 0x0) && ((code & 0x0f) <= 0x8)) {
-
-		ra [ 7 ] -= 4;
-		mem_set( ra [ 7 ], pc, S_LONG );
-
-		ra [ 7 ] -= 2;
-		mem_set( ra [ 7 ], sr, S_WORD );
-
-		vector = mem_get((0x80 + ((code & 0x0f) << 2)), S_LONG );
-		
-		pc = vector;
-		return( FALSE );
-	} else {
-		err68a( "未定義の例外処理を実行しました", __FILE__, __LINE__ );
-		return( TRUE );
 	}
+	return EnterException(32 + trap_number);
+}
+
+static int EnterException(int vector_number)
+{
+	short old_sr = sr;
+
+	ra [ 7 ] = adjust_address(ra [ 7 ], -4);
+	mem_set(ra [ 7 ], pc, S_LONG);
+	ra [ 7 ] = adjust_address(ra [ 7 ], -2);
+	mem_set(ra [ 7 ], old_sr, S_WORD);
+	sr = (short)((old_sr | 0x2000) & 0x7fff);
+	pc = mem_get((Long)((ULong)vector_number * 4u), S_LONG);
+	return FALSE;
 }
 
 /*
@@ -1105,9 +1109,9 @@ static	int	Rte()
 		return( TRUE );
 	}
 	sr = (short)mem_get( ra [ 7 ], S_WORD );
-	ra [ 7 ] += 2;
+	ra [ 7 ] = adjust_address(ra [ 7 ], 2);
 	pc = mem_get( ra [ 7 ], S_LONG );
-	ra [ 7 ] += 4;
+	ra [ 7 ] = adjust_address(ra [ 7 ], 4);
 	trap_count = RAS_INTERVAL;
 
 	return( FALSE );
@@ -1121,7 +1125,7 @@ static	int	Rts()
 {
 #if defined(DEBUG_JSR)
 	Long	save_pc;
-	save_pc = pc - 2;
+	save_pc = adjust_address(pc, -2);
 #endif
 
 #ifdef	TRACE
@@ -1129,13 +1133,25 @@ static	int	Rts()
 #endif
 
 	pc = mem_get( ra [ 7 ], S_LONG );
-	ra [ 7 ] += 4;
+	ra [ 7 ] = adjust_address(ra [ 7 ], 4);
 
 #if defined(DEBUG_JSR)
-			printf("%8d: %8d: $%06x RETURN TO $%06x\n", sub_num++, --sub_level, save_pc, pc - 2);
+			printf("%8d: %8d: $%06x RETURN TO $%06x\n", sub_num++, --sub_level, save_pc, adjust_address(pc, -2));
 #endif
 
 	return( FALSE );
+}
+
+/* Return and restore the low byte of SR (CCR). */
+static int Rtr(void)
+{
+	Long ccr = mem_get(ra [ 7 ], S_WORD);
+
+	sr = (short)((sr & 0xff00) | (ccr & 0x00ff));
+	ra [ 7 ] = adjust_address(ra [ 7 ], 2);
+	pc = mem_get(ra [ 7 ], S_LONG);
+	ra [ 7 ] = adjust_address(ra [ 7 ], 4);
+	return FALSE;
 }
 
 /*
@@ -1181,11 +1197,9 @@ static	int	Nbcd( char code2 )
 		work_mode = mode;
 	}
 
-	/* ソースのアドレッシングモードに応じた処理 */
-	if ( work_mode == EA_AD ) {
-		err68a( "nbcd には アドレスレジスタ直接はありません。", __FILE__, __LINE__ );
-		return(TRUE);
-	} else if (get_data_at_ea(EA_All, work_mode, src_reg, size, &src_data)) {
+	/* 書き戻しで同じ拡張語を再利用できるよう、読み出し後に PC を戻す */
+	if (get_data_at_ea_noinc(EA_VariableData, work_mode, src_reg, size,
+	                         &src_data)) {
 		return(TRUE);
 	}
 
@@ -1240,7 +1254,7 @@ static	int	Nbcd( char code2 )
 		work_mode = mode;
 	}
 
-	if ( set_data_at_ea(EA_All, work_mode, src_reg, size, dst_data) ) {
+	if (set_data_at_ea(EA_VariableData, work_mode, src_reg, size, dst_data)) {
 		return( TRUE );
 	}
 

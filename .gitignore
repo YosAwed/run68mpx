@@ -12,3 +12,4 @@ build
 .DS_Store
 *.check_cache
 build2
+build-sanitize

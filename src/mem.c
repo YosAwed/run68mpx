@@ -24,8 +24,10 @@
 #include <stdio.h>
 #include "run68.h"
 
-static	int	mem_red_chk( Long );
-static	int	mem_wrt_chk( Long );
+static	int	mem_red_chk( Long, char );
+static	int	mem_wrt_chk( Long, char );
+static	ULong	mem_normalize_address( Long );
+static	ULong	mem_access_width( char );
 void	run68_abort( Long );
 
 /*
@@ -33,15 +35,17 @@ void	run68_abort( Long );
  　　　　の値を得る
  戻り値：その値
 */
-Long idx_get()
+Long idx_get(void)
 {
-	char	*mem;
-	char	idx2;
-	char	idx_reg;
+	UShort	extension;
+	UChar	idx2;
+	UChar	idx_reg;
 	Long	idx;
+	Char	displacement;
 
-	mem = prog_ptr + pc;
-	idx2 = *(mem++);
+	extension = (UShort)mem_get(pc, S_WORD);
+	idx2 = (UChar)(extension >> 8);
+	displacement = (Char)(extension & 0xff);
 	idx_reg = ((idx2 >> 4) & 0x07);
 	if ( (idx2 & 0x80) == 0 )
 		idx = rd [ idx_reg ];
@@ -53,9 +57,9 @@ Long idx_get()
 		else
 			idx &= 0x0000FFFF;
 	}
-	pc += 2;
+	pc = run68_add32(pc, 2);
 
-	return( idx + *mem );
+	return( (Long)((ULong)idx + (Long)displacement) );
 }
 
 /*
@@ -65,27 +69,16 @@ Long idx_get()
 */
 Long imi_get( char size )
 {
-	UChar	*mem;
-	Long	d;
-
-	mem = (UChar *)prog_ptr + pc;
-
 	switch( size ) {
 		case S_BYTE:
-			pc += 2;
-			return( *(mem + 1) );
+			pc = run68_add32(pc, 2);
+			return( mem_get(run68_sub32(pc, 1), S_BYTE) );
 		case S_WORD:
-			pc += 2;
-			d = *(mem++);
-			d = ((d << 8) | *mem);
-			return( d );
+			pc = run68_add32(pc, 2);
+			return( mem_get(run68_sub32(pc, 2), S_WORD) );
 		default:	/* S_LONG */
-			pc += 4;
-			d = *(mem++);
-			d = ((d << 8) | *(mem++));
-			d = ((d << 8) | *(mem++));
-			d = ((d << 8) | *mem);
-			return( d );
+			pc = run68_add32(pc, 4);
+			return( mem_get(run68_sub32(pc, 4), S_LONG) );
 	}
 }
 
@@ -97,12 +90,18 @@ Long mem_get( Long adr, char size )
 {
 	UChar   *mem;
 	Long	d;
+	ULong normalized = mem_normalize_address(adr);
 
-	if ( adr < ENV_TOP || adr >= mem_aloc ) {
-		if ( mem_red_chk( adr ) == FALSE )
+	if ( normalized < ENV_TOP ||
+	     normalized + mem_access_width(size) > (ULong)mem_aloc ) {
+		if ( mem_red_chk( (Long)normalized, size ) == FALSE )
 			return( 0 );
 	}
-	mem = (UChar *)prog_ptr + adr;
+	if (size != S_BYTE && (normalized & 1u) != 0) {
+		if ( mem_red_chk( (Long)normalized, size ) == FALSE )
+			return( 0 );
+	}
+	mem = (UChar *)prog_ptr + normalized;
 
 	switch( size ) {
 		case S_BYTE:
@@ -127,12 +126,18 @@ Long mem_get( Long adr, char size )
 void mem_set( Long adr, Long d, char size )
 {
 	UChar   *mem;
+	ULong normalized = mem_normalize_address(adr);
 
-	if ( adr < ENV_TOP || adr >= mem_aloc ) {
-		if ( mem_wrt_chk( adr ) == FALSE )
+	if ( normalized < ENV_TOP ||
+	     normalized + mem_access_width(size) > (ULong)mem_aloc ) {
+		if ( mem_wrt_chk( (Long)normalized, size ) == FALSE )
 			return;
 	}
-	mem = (UChar *)prog_ptr + adr;
+	if (size != S_BYTE && (normalized & 1u) != 0) {
+		if ( mem_wrt_chk( (Long)normalized, size ) == FALSE )
+			return;
+	}
+	mem = (UChar *)prog_ptr + normalized;
 
 	switch( size ) {
 		case S_BYTE:
@@ -156,20 +161,25 @@ void mem_set( Long adr, Long d, char size )
  戻り値： TRUE = OK
          FALSE = NGだが、0を読み込んだとみなす
 */
-static int mem_red_chk( Long adr )
+static int mem_red_chk( Long adr, char size )
 {
 	char message[256];
+	ULong width = mem_access_width(size);
 
-	adr &= 0x00FFFFFF;
-	if ( adr >= 0xC00000 ) {
-		if ( ini_info.io_through == TRUE )
-			return( FALSE );
-		sprintf(message, "I/OポートorROM($%06X)から読み込もうとしました。", adr);
+	if (size != S_BYTE && ((ULong)adr & 1u) != 0) {
+		snprintf(message, sizeof(message), "アドレスエラー($%06X)からの読み込みです。", adr);
 		err68(message);
 		run68_abort( adr );
 	}
-	if ( SR_S_REF() == 0 || adr >= mem_aloc ) {
-		sprintf(message, "不正アドレス($%06X)からの読み込みです。", adr);
+	if ( adr >= 0xC00000 ) {
+		if ( ini_info.io_through == TRUE )
+			return( FALSE );
+		snprintf(message, sizeof(message), "I/OポートorROM($%06X)から読み込もうとしました。", adr);
+		err68(message);
+		run68_abort( adr );
+	}
+	if ( SR_S_REF() == 0 || (ULong)adr + width > (ULong)mem_aloc ) {
+		snprintf(message, sizeof(message), "不正アドレス($%06X)からの読み込みです。", adr);
 		err68(message);
 		run68_abort( adr );
 	}
@@ -181,11 +191,16 @@ static int mem_red_chk( Long adr )
  戻り値： TRUE = OK
          FALSE = NGだが、何も書き込まずにOKとみなす
 */
-static int mem_wrt_chk( Long adr )
+static int mem_wrt_chk( Long adr, char size )
 {
 	char message[256];
+	ULong width = mem_access_width(size);
 
-	adr &= 0x00FFFFFF;
+	if (size != S_BYTE && ((ULong)adr & 1u) != 0) {
+		snprintf(message, sizeof(message), "アドレスエラー($%06X)への書き込みです。", adr);
+		err68(message);
+		run68_abort( adr );
+	}
 	if ( adr >= 0xC00000 ) {
 		if ( ini_info.io_through == TRUE )
 			return( FALSE );
@@ -193,16 +208,33 @@ static int mem_wrt_chk( Long adr )
 		if ( adr == 0xE8A01F )	/# RESET CONTROLLER #/
 			return( FALSE );
 */
-		sprintf(message, "I/OポートorROM($%06X)に書き込もうとしました。", adr);
+		snprintf(message, sizeof(message), "I/OポートorROM($%06X)に書き込もうとしました。", adr);
 		err68(message);
 		run68_abort(adr);
 	}
-	if ( SR_S_REF() == 0 || adr >= mem_aloc ) {
-		sprintf(message, "不正アドレスへの書き込みです($%06X)", adr);
+	if ( SR_S_REF() == 0 || (ULong)adr + width > (ULong)mem_aloc ) {
+		snprintf(message, sizeof(message), "不正アドレスへの書き込みです($%06X)", adr);
 		err68(message);
 		run68_abort( adr );
 	}
 	return( TRUE );
+}
+
+static ULong mem_normalize_address(Long adr)
+{
+	return (ULong)adr & 0x00ffffffu;
+}
+
+static ULong mem_access_width(char size)
+{
+	switch (size) {
+		case S_BYTE:
+			return 1;
+		case S_WORD:
+			return 2;
+		default:
+			return 4;
+	}
 }
 
 /*

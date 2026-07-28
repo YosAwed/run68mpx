@@ -103,7 +103,7 @@ void	read_ini(char *path, char *prog)
 		fclose(fp);
 		return;
 	}
-	sprintf( sec_name, "[%s]", &(prog [ i ]) );
+	snprintf(sec_name, sizeof(sec_name), "[%s]", &(prog [ i ]));
 	_strlwr( sec_name );
 	/* 内容を調べる */
 	while( fgets(buf, 1023, fp) != NULL ) {

@@ -37,6 +37,24 @@ cmake -S . -B build-xcode -G Xcode
 open build-xcode/run68.xcodeproj
 ```
 
+## テスト
+
+CPU命令、メモリアクセス、Xファイルローダ、macOS互換層の回帰テストをCTestで実行できます。
+
+```sh
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+AddressSanitizerとUndefinedBehaviorSanitizerを使う場合:
+
+```sh
+cmake -S . -B build-sanitize -DBUILD_TESTING=ON -DRUN68_ENABLE_SANITIZERS=ON
+cmake --build build-sanitize --parallel
+ctest --test-dir build-sanitize --output-on-failure
+```
+
 ## 使い方
 
 ```sh

@@ -32,6 +32,11 @@
 
 #include "run68.h"
 
+static Long add_address(Long base, Long offset)
+{
+	return (Long)((ULong)base + (ULong)offset);
+}
+
 /*
  * 【説明】
  *   実効アドレスを取得する。
@@ -77,11 +82,11 @@ BOOL get_ea(Long save_pc, int AceptAdrMode, int mode, int reg, Long *data)
 			break;
 		case EA_AID:
 			disp = (short)imi_get( S_WORD );
-			*data = ra [ reg ] + (int)disp;
+			*data = add_address(ra [ reg ], (Long)disp);
 			break;
 		case EA_AIX:
 			idx = idx_get();
-			*data = ra [ reg ] + idx;
+			*data = add_address(ra [ reg ], idx);
 			break;
 		case EA_SRT:
 			idx = imi_get( S_WORD );
@@ -94,11 +99,11 @@ BOOL get_ea(Long save_pc, int AceptAdrMode, int mode, int reg, Long *data)
 			break;
 		case EA_PC:
 			disp = (short)imi_get( S_WORD );
-			*data = save_pc + (int)disp;
+			*data = add_address(save_pc, (Long)disp);
 			break;
 		case EA_PCX:
 			idx = idx_get();
-			*data = save_pc + idx;
+			*data = add_address(save_pc, idx);
 			break;
 		default:
 			err68a( "アドレッシングモードが異常です。", __FILE__, __LINE__ );
@@ -202,11 +207,12 @@ BOOL get_data_at_ea(int AceptAdrMode, int mode, int reg, int size, Long *data)
 				break;
 			case EA_AID:
 				disp = (short)imi_get( S_WORD );
-				*data = mem_get( ra [ reg ] + disp, (char)size );
+				*data = mem_get(add_address(ra [ reg ], (Long)disp),
+				                (char)size);
 				break;
 			case EA_AIX:
 				idx = idx_get();
-				*data = mem_get( ra [ reg ] + (int)idx, (char)size );
+				*data = mem_get(add_address(ra [ reg ], idx), (char)size);
 				break;
 			case EA_SRT:
 				idx = imi_get( S_WORD );
@@ -220,11 +226,11 @@ BOOL get_data_at_ea(int AceptAdrMode, int mode, int reg, int size, Long *data)
 				break;
 			case EA_PC:
 				disp = (short)imi_get( S_WORD );
-				*data = mem_get( save_pc + disp, (char)size );
+				*data = mem_get(add_address(save_pc, (Long)disp), (char)size);
 				break;
 			case EA_PCX:
 				idx = idx_get();
-				*data = mem_get( save_pc + idx, (char)size );
+				*data = mem_get(add_address(save_pc, idx), (char)size);
 				break;
 			case EA_IM:
 				*data = imi_get( (char)size );
@@ -335,11 +341,12 @@ BOOL set_data_at_ea(int AceptAdrMode, int mode, int reg, int size, Long data)
 				break;
 			case EA_AID:
 				disp = (short)imi_get( S_WORD );
-				mem_set( ra [ reg ] + (int)disp, data, (char)size );
+				mem_set(add_address(ra [ reg ], (Long)disp), data,
+				        (char)size);
 				break;
 			case EA_AIX:
 				idx = idx_get();
-				mem_set( ra [ reg ] + idx, data, (char)size );
+				mem_set(add_address(ra [ reg ], idx), data, (char)size);
 				break;
 			case EA_SRT:
 				idx = imi_get( S_WORD );
@@ -353,11 +360,11 @@ BOOL set_data_at_ea(int AceptAdrMode, int mode, int reg, int size, Long data)
 				break;
 			case EA_PC:
 				disp = (short)imi_get( S_WORD );
-				mem_set( save_pc + (int)disp, data, (char)size );
+				mem_set(add_address(save_pc, (Long)disp), data, (char)size);
 				break;
 			case EA_PCX:
 				idx = idx_get();
-				mem_set( save_pc + idx, data, (char)size );
+				mem_set(add_address(save_pc, idx), data, (char)size);
 				break;
 			default:
 				err68a( "アドレッシングモードが異常です。", __FILE__, __LINE__ );

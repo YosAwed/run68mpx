@@ -56,7 +56,7 @@ int	line2( char *pc_ptr )
 
 	code1 = *(pc_ptr++);
 	code2 = *pc_ptr;
-	pc += 2;
+	pc = run68_add32(pc, 2);
 	save_pc = pc;
 	dst_reg  = ((code1 & 0x0E) >> 1);
 	dst_mode = (((code1 & 0x01) << 2) | ((code2 >> 6) & 0x03));
@@ -103,7 +103,7 @@ int	line2( char *pc_ptr )
 	}
 
 	/* ディスティネーションのアドレッシングモードに応じた処理 */
-	if (set_data_at_ea(EA_VariableData | (1 << (EA_AI - 1)), dst_mode, dst_reg, size, src_data)) {
+	if (set_data_at_ea(EA_Variable, dst_mode, dst_reg, size, src_data)) {
 		return(TRUE);
 	}
 

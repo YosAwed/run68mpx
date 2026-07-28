@@ -49,7 +49,7 @@ int	lineb( char *pc_ptr )
 
 	code1 = *(pc_ptr++);
 	code2 = *pc_ptr;
-	pc += 2;
+	pc = run68_add32(pc, 2);
 
 	if ( (code1 & 0x01) == 0x00 ) {
 		if ( (code2 & 0xC0) == 0xC0 )
@@ -203,7 +203,8 @@ static	int	Cmpa( char code1, char code2 )
 	before = sr & 0x1f;
 #endif
 	old = ra [ dst_reg ];
-	ans = old - src_data;
+	/* CMPA.W sign-extends its source, then always performs a long compare. */
+	ans = sub_long(src_data, old, S_LONG);
 
 #if 0
 	carry = ((old >> 1) & 0x7FFFFFFF) - ((src_data >> 1) & 0x7FFFFFFF);
@@ -234,7 +235,7 @@ static	int	Cmpa( char code1, char code2 )
 #endif
 
 	/* フラグの変化 */
-	cmp_conditions(src_data, old, ans, size);
+	cmp_conditions(src_data, old, ans, S_LONG);
 
 #ifdef TEST_CCR
 	check("cmpa", src_data, dest_data, ans, size, before);

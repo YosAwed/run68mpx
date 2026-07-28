@@ -51,7 +51,7 @@ int	line9( char *pc_ptr )
 
 	code1 = *(pc_ptr++);
 	code2 = *pc_ptr;
-	pc += 2;
+	pc = run68_add32(pc, 2);
 
 	if ( (code2 & 0xC0) == 0xC0 ) {
 		return( Suba( code1, code2 ) );
@@ -131,6 +131,7 @@ static	int	Subx( char code1, char code2 )
 	char	dst_reg;
 	short	save_z;
 	short	save_x;
+	Long	src_data;
 	Long	dest_data;
 
 #ifdef TEST_CCR
@@ -143,15 +144,18 @@ static	int	Subx( char code1, char code2 )
 
 	if ( (code2 & 0x08) != 0 ) {
 		/* -(An), -(An) */
-		err68a( "未定義命令を実行しました", __FILE__, __LINE__ );
-		return( TRUE );
+		if (get_data_at_ea(EA_All, EA_AIPD, src_reg, size, &src_data))
+			return TRUE;
+		if (get_data_at_ea(EA_All, EA_AIPD, dst_reg, size, &dest_data))
+			return TRUE;
+	} else {
+		src_data = rd [ src_reg ];
+		dest_data = rd [ dst_reg ];
 	}
 
 #ifdef TEST_CCR
 	before = sr & 0x1f;
 #endif
-	dest_data = rd [ dst_reg ];
-
 	save_z = CCR_Z_REF() != 0 ? 1 : 0;
 	save_x = CCR_X_REF() != 0 ? 1 : 0;
 //	if ( CCR_X_REF() == 0 ) {
@@ -159,7 +163,9 @@ static	int	Subx( char code1, char code2 )
 //		rd [ dst_reg ] = sub_long(rd [ src_reg ], dest_data, size );
 //	} else {
 		//rd [ dst_reg ] = sub_rd( dst_reg, rd [ src_reg ] + 1, size );
-		rd [ dst_reg ] = sub_long(rd [ src_reg ] + save_x, dest_data , size );
+		rd [ 8 ] = sub_long(src_data, dest_data, size);
+		if (save_x)
+			rd [ 8 ] = sub_long(1, rd [ 8 ], size);
 //	}
 
 //	if ( rd [ dst_reg ] == 0 ) {
@@ -168,7 +174,15 @@ static	int	Subx( char code1, char code2 )
 //	}
 
 	/* フラグの変化 */
-	sub_conditions(rd[src_reg], dest_data, rd[dst_reg], size, save_z);
+	if ((code2 & 0x08) != 0) {
+		if (set_data_at_ea(EA_All, EA_AI, dst_reg, size, rd [ 8 ]))
+			return TRUE;
+	} else {
+		rd [ dst_reg ] = rd [ 8 ];
+	}
+
+	/* フラグの変化 */
+	sub_conditions(src_data, dest_data, rd[8], size, save_z);
 
 #ifdef TEST_CCR
 	check("subx", rd[src_reg], dest_data, rd[dst_reg], size, before);

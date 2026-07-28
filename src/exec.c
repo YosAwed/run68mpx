@@ -95,100 +95,23 @@ int prog_exec()
 			SR_S_ON();
 			adr = mem_get( 0x28, S_LONG );
 			if ( adr != HUMAN_WORK ) {
-				ra [ 7 ] -= 4;
+				ra [ 7 ] = run68_sub32(ra [ 7 ], 4);
 				mem_set( ra [ 7 ], pc, S_LONG );
-				ra [ 7 ] -= 2;
+				ra [ 7 ] = run68_sub32(ra [ 7 ], 2);
 				mem_set( ra [ 7 ], sr, S_WORD );
 				pc = adr;
 				return( FALSE );
 			}
 			if ( save_s == 0 )
 				SR_S_OFF();
-			pc += 2;
+			pc = run68_add32(pc, 2);
 			err68( "A系列割り込みを実行しました" );
 			return( TRUE );
 		default:
-			pc += 2;
+			pc = run68_add32(pc, 2);
 			err68( "おかしな命令を実行しました" );
 			return( TRUE );
 	}
-}
-
-/*
- 　機能：コンディションが成立しているかどうか調べる
- 戻り値： TRUE = 成立
- 　　　　FALSE = 不成立
-*/
-int get_cond( char cond )
-{
-	switch( cond ) {
-		case 0x00:	/* t */
-			return( TRUE );
-		case 0x02:	/* hi */
-			if ( CCR_C_REF() == 0 && CCR_Z_REF() == 0 )
-				return( TRUE );
-			break;
-		case 0x03:	/* ls */
-			if ( CCR_C_REF() != 0 || CCR_Z_REF() != 0 )
-				return( TRUE );
-			break;
-		case 0x04:	/* cc */
-			if ( CCR_C_REF() == 0 )
-				return( TRUE );
-			break;
-		case 0x05:	/* cs */
-			if ( CCR_C_REF() != 0 )
-				return( TRUE );
-			break;
-		case 0x06:	/* ne */
-			if ( CCR_Z_REF() == 0 )
-				return( TRUE );
-			break;
-		case 0x07:	/* eq */
-			if ( CCR_Z_REF() != 0 )
-				return( TRUE );
-			break;
-		case 0x08:	/* vc */
-			if ( CCR_V_REF() == 0 )
-				return( TRUE );
-			break;
-		case 0x09:	/* vs */
-			if ( CCR_V_REF() != 0 )
-				return( TRUE );
-			break;
-		case 0x0A:	/* pl */
-			if ( CCR_N_REF() == 0 )
-				return( TRUE );
-			break;
-		case 0x0B:	/* mi */
-			if ( CCR_N_REF() != 0 )
-				return( TRUE );
-			break;
-		case 0x0C:	/* ge */
-			if ( (CCR_N_REF() != 0 && CCR_V_REF() != 0) ||
-			     (CCR_N_REF() == 0 && CCR_V_REF() == 0) )
-				return( TRUE );
-			break;
-		case 0x0D:	/* lt */
-			if ( (CCR_N_REF() != 0 && CCR_V_REF() == 0) ||
-			     (CCR_N_REF() == 0 && CCR_V_REF() != 0) )
-				return( TRUE );
-			break;
-		case 0x0E:	/* gt */
-			if ( CCR_Z_REF() == 0 &&
-			   ( (CCR_N_REF() != 0 && CCR_V_REF() != 0) ||
-			     (CCR_N_REF() == 0 && CCR_V_REF() == 0) ) )
-				return( TRUE );
-			break;
-		case 0x0F:	/* le */
-			if ( CCR_Z_REF() != 0 ||
-			     (CCR_N_REF() != 0 && CCR_V_REF() == 0) ||
-			     (CCR_N_REF() == 0 && CCR_V_REF() != 0) )
-				return( TRUE );
-			break;
-	}
-
-	return( FALSE );
 }
 
 /*
@@ -200,7 +123,7 @@ void	err68( char *mes )
     OPBuf_insert(&OP_info);
 	fprintf(stderr, "run68 exec error: %s PC=%06X\n", mes, pc);
 	if ( memcmp( mes, "未定義", 6 ) == 0 )
-		fprintf(stderr, "code = %08X\n",mem_get( pc - 4, S_LONG ));
+		fprintf(stderr, "code = %08X\n",mem_get(run68_sub32(pc, 4), S_LONG));
     OPBuf_display(10);
     run68_abort(pc);
 }
@@ -219,7 +142,7 @@ void err68a( char *mes, char *file, int line )
 	fprintf(stderr, "run68 exec error: %s PC=%06X\n", mes, pc);
 	fprintf(stderr, "\tAt %s:%d\n", file, line);
 	if ( memcmp( mes, "未定義", 6 ) == 0 )
-		fprintf(stderr, "code = %08X\n",mem_get( pc - 4, S_LONG ));
+		fprintf(stderr, "code = %08X\n",mem_get(run68_sub32(pc, 4), S_LONG));
     OPBuf_display(10);
     run68_abort(pc);
 }
@@ -239,7 +162,7 @@ void err68b(char *mes, Long pc, Long ppc)
 	fprintf(stderr, "run68 exec error: %s PC=%06X\n", mes, pc);
 	fprintf(stderr, "PC of previous op code: PC=%06X\n", ppc);
 	if ( memcmp( mes, "未定義", 6 ) == 0 )
-		fprintf(stderr, "code = %08X\n",mem_get( pc - 4, S_LONG ));
+		fprintf(stderr, "code = %08X\n",mem_get(run68_sub32(pc, 4), S_LONG));
     OPBuf_display(10);
     run68_abort(pc);
 }
@@ -251,17 +174,17 @@ void err68b(char *mes, Long pc, Long ppc)
 void inc_ra( char reg, char size )
 {
 	if ( reg == 7 && size == S_BYTE ) {
-		ra [ 7 ] += 2;
+		ra [ 7 ] = run68_add32(ra [ 7 ], 2);
 	} else {
 		switch( size ) {
 			case S_BYTE:
-				ra [ reg ] += 1;
+				ra [ reg ] = run68_add32(ra [ reg ], 1);
 				break;
 			case S_WORD:
-				ra [ reg ] += 2;
+				ra [ reg ] = run68_add32(ra [ reg ], 2);
 				break;
 			default:	/* S_LONG */
-				ra [ reg ] += 4;
+				ra [ reg ] = run68_add32(ra [ reg ], 4);
 				break;
 		}
 	}
@@ -274,17 +197,17 @@ void inc_ra( char reg, char size )
 void dec_ra( char reg, char size )
 {
 	if ( reg == 7 && size == S_BYTE ) {
-		ra [ 7 ] -= 2;
+		ra [ 7 ] = run68_sub32(ra [ 7 ], 2);
 	} else {
 		switch( size ) {
 			case S_BYTE:
-				ra [ reg ] -= 1;
+				ra [ reg ] = run68_sub32(ra [ reg ], 1);
 				break;
 			case S_WORD:
-				ra [ reg ] -= 2;
+				ra [ reg ] = run68_sub32(ra [ reg ], 2);
 				break;
 			default:	/* S_LONG */
-				ra [ reg ] -= 4;
+				ra [ reg ] = run68_sub32(ra [ reg ], 4);
 				break;
 		}
 	}
@@ -483,12 +406,12 @@ void OPBuf_display(int n)
         op = OPBuf_getentry(i);
         addr = op->pc;
         s = disassemble(addr, &naddr);
-        sprintf(hex, "$%06X ", addr);
+		snprintf(hex, sizeof(hex), "$%06X ", addr);
         while (addr < naddr)
         {
             char *p = hex + strlen(hex);
             code = (((unsigned short)prog_ptr_u[addr]) << 8) + (unsigned short)prog_ptr_u[addr + 1];
-            sprintf(p, "%04X ", code);
+			snprintf(p, sizeof(hex) - (size_t)(p - hex), "%04X ", code);
             addr += 2;
         }
         for (j = strlen(hex); j < 34; j ++)
@@ -511,7 +434,7 @@ void OPBuf_display(int n)
  　　　　の値を得る
  戻り値：その値
 */
-int get_idx(int *pc, char *regstr)
+static int get_idx(int *pc, char *regstr, size_t regstr_size)
 {
 	char	*mem;
 	char	idx2;
@@ -522,9 +445,9 @@ int get_idx(int *pc, char *regstr)
 	idx2 = *(mem++);
 	idx_reg = ((idx2 >> 4) & 0x07);
 	if ( (idx2 & 0x80) == 0 ) {
-            sprintf(regstr, "d%d", idx_reg);
+			snprintf(regstr, regstr_size, "d%d", idx_reg);
 	} else {
-            sprintf(regstr, "d%d", idx_reg);
+			snprintf(regstr, regstr_size, "d%d", idx_reg);
         }
 	if ( (idx2 & 0x08) == 0 ) {	/* WORD */
             strcat(regstr, ".w");
@@ -580,71 +503,73 @@ Long get_imi(int *pc, char size )
       なし。
 */
 
-void get_operand(char *buf, int *pc, int AddressingMode, int RegisterNumber, int size)
+static void __attribute__((unused))
+get_operand(char *buf, size_t buf_size, int *pc,
+            int AddressingMode, int RegisterNumber, int size)
 {
     char regstr[16];
     int  disp;
 
     switch (AddressingMode) {
         case 0:
-            sprintf(buf, "d%d", RegisterNumber);
+			snprintf(buf, buf_size, "d%d", RegisterNumber);
             break;
         case 1:
-            sprintf(buf, "a%d", RegisterNumber);
+			snprintf(buf, buf_size, "a%d", RegisterNumber);
             break;
         case 2:
-            sprintf(buf, "(a%d)", RegisterNumber);
+			snprintf(buf, buf_size, "(a%d)", RegisterNumber);
             break;
         case 3:
-            sprintf(buf, "(a%d)+", RegisterNumber);
+			snprintf(buf, buf_size, "(a%d)+", RegisterNumber);
             break;
         case 4:
-            sprintf(buf, "-(a%d)", RegisterNumber);
+			snprintf(buf, buf_size, "-(a%d)", RegisterNumber);
             break;
         case 5:
             disp = get_imi(pc, S_WORD);
-            sprintf(buf, "$%04x(a%d)", disp, RegisterNumber); 
+			snprintf(buf, buf_size, "$%04x(a%d)", disp, RegisterNumber);
             break;
         case 6:
-            disp = get_idx(pc, regstr);
-            sprintf(buf, "%d(a%d,%s)", disp, RegisterNumber, regstr); 
+			disp = get_idx(pc, regstr, sizeof(regstr));
+			snprintf(buf, buf_size, "%d(a%d,%s)", disp, RegisterNumber, regstr);
             break;
         case 7:
             switch( RegisterNumber ) {
                 case 0:
                     disp = get_imi(pc, S_WORD);
-                    sprintf(buf, "$%04x", disp); 
+					snprintf(buf, buf_size, "$%04x", disp);
                     break;
                 case 1:
                     disp = get_imi(pc, S_LONG);
-                    sprintf(buf, "$%08x", disp); 
+					snprintf(buf, buf_size, "$%08x", disp);
                     break;
                 case 2:
                     disp = get_imi(pc, S_WORD);
-                    sprintf(buf, "$%04x(pc)", disp); 
+					snprintf(buf, buf_size, "$%04x(pc)", disp);
                     break;
                 case 3:
-                    disp = get_idx(pc, regstr);
-                    sprintf(buf, "%d(pc,%s)", disp, regstr); 
+					disp = get_idx(pc, regstr, sizeof(regstr));
+					snprintf(buf, buf_size, "%d(pc,%s)", disp, regstr);
                     break;
                 case 4:
                     disp = get_imi(pc, size);
                     switch (size) {
                         case S_BYTE:
-                            sprintf(buf, "#$%02x", disp); 
+							snprintf(buf, buf_size, "#$%02x", disp);
                             break;
                         case S_WORD:
-                            sprintf(buf, "#$%04x", disp); 
+							snprintf(buf, buf_size, "#$%04x", disp);
                             break;
                         case S_LONG:
-                            sprintf(buf, "#$%08x", disp); 
+							snprintf(buf, buf_size, "#$%08x", disp);
                             break;
                         default:
-                            strcpy(buf, "????????"); 
+							snprintf(buf, buf_size, "%s", "????????");
                     }
                     break;
                 default:
-                    strcpy(buf, "????????"); 
+					snprintf(buf, buf_size, "%s", "????????");
             }
             break;
     }

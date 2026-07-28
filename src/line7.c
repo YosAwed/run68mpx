@@ -36,7 +36,7 @@ int	line7( char *pc_ptr )
 	char	data;
 
 	code = *(pc_ptr++);
-	pc += 2;
+	pc = run68_add32(pc, 2);
 	if ( (code & 0x01) != 0 ) {
 		err68a( "おかしな命令を実行しました", __FILE__, __LINE__ );
 		return( TRUE );
