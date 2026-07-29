@@ -74,9 +74,7 @@
 #elif defined(__APPLE__) || defined(__linux__)
   #include <time.h>
   #include <dirent.h>
-  #include <sys/select.h>
   #include <sys/statvfs.h>
-  #include <termios.h>
   #include <unistd.h>
   #include <fcntl.h>
 #elif defined(__EMSCRIPTEN__)
@@ -229,45 +227,6 @@ void _flushall(void)
 	fflush(NULL);
 }
 
-static int console_pushback = EOF;
-
-static int read_console_char(int echo)
-{
-	struct termios original;
-	struct termios raw;
-	int result;
-
-	if (console_pushback != EOF) {
-		result = console_pushback;
-		console_pushback = EOF;
-		return result;
-	}
-	if (!isatty(STDIN_FILENO) || tcgetattr(STDIN_FILENO, &original) != 0)
-		return getchar();
-	raw = original;
-	raw.c_lflag &= (tcflag_t)~ICANON;
-	if (echo)
-		raw.c_lflag |= ECHO;
-	else
-		raw.c_lflag &= (tcflag_t)~ECHO;
-	raw.c_cc[VMIN] = 1;
-	raw.c_cc[VTIME] = 0;
-	if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0)
-		return getchar();
-	result = getchar();
-	(void)tcsetattr(STDIN_FILENO, TCSANOW, &original);
-	return result;
-}
-
-char _getch(void)
-{
-	return (char)read_console_char(FALSE);
-}
-
-char _getche(void)
-{
-	return (char)read_console_char(TRUE);
-}
 void dos_getdrive(Long *drv) {
 	*drv = 1;	// 1 = A:
 }
@@ -277,30 +236,6 @@ void dos_setdrive(Long drv, Long* dmy) {
 	(void)dmy;
 }
 
-int kbhit(void)
-{
-	fd_set read_set;
-	struct timeval timeout = {0, 0};
-
-	if (console_pushback != EOF)
-		return 1;
-	FD_ZERO(&read_set);
-	FD_SET(STDIN_FILENO, &read_set);
-	return select(STDIN_FILENO + 1, &read_set, NULL, NULL, &timeout) > 0;
-}
-
-int _kbhit(void)
-{
-	return kbhit();
-}
-
-char ungetch(char c)
-{
-	if (console_pushback != EOF)
-		return 0;
-	console_pushback = (unsigned char)c;
-	return c;
-}
 #elif defined(__EMSCRIPTEN__)
 void CloseHandle(FILE *fp) { fclose(fp); }
 int CreateDirectoryA(char *name, void *ptr)
@@ -348,11 +283,6 @@ int _dos_write(int fd, const void *data, unsigned size, unsigned *res)
 	return 0;
 }
 void _flushall(void) { fflush(NULL); }
-char _getch(void) { return (char)getchar(); }
-char _getche(void) { return (char)getchar(); }
-int _kbhit(void) { return 1; }
-int kbhit(void) { return 1; }
-char ungetch(char c) { return ungetc((unsigned char)c, stdin) == EOF ? 0 : c; }
 void dos_getdrive(Long *drv) { *drv = 1; }
 void dos_setdrive(Long drv, Long *dmy)
 {
@@ -405,7 +335,7 @@ int dos_call( UChar code )
 #elif defined(DOSX)
 		fflush( stdout );
 #endif
-		rd [ 0 ] = (_getche() & 0xFF);
+		rd [ 0 ] = (run68_console_getch(TRUE) & 0xFF);
 		break;
 	  case 0x02:    /* PUTCHAR */
 		srt = (short)mem_get( stack_adr, S_WORD );
@@ -423,10 +353,18 @@ int dos_call( UChar code )
 			WriteFile( finfo[ 1 ].fh, &c, 1,
 					   (LPDWORD)&nwritten, NULL);
 		}
+		rd[0] = 0;
 #elif defined(DOSX)
 		_dos_write( fileno(finfo[ 1 ].fh), &c, 1, &drv );
+		rd[0] = 0;
+#else
+		if (fputc((unsigned char)c, finfo[1].fh) == EOF)
+			rd[0] = -1;
+		else {
+			fflush(finfo[1].fh);
+			rd[0] = 0;
+		}
 #endif
-		rd [ 0 ] = 0;
 		break;
 	  case 0x06:    /* KBHIT */
 		if (func_trace_f) {
@@ -457,16 +395,16 @@ int dos_call( UChar code )
 			}
 #else
 			rd [ 0 ] = 0;
-			if ( kbhit() != 0 ) {
-				c = _getch();
+			if ( run68_console_kbhit() != 0 ) {
+				c = run68_console_getch(FALSE);
 				if ( c == 0x00 ) {
-					c = _getch();
+					c = run68_console_getch(FALSE);
 				} else {
 					if ( ini_info.pc98_key == TRUE )
 					  c = cnv_key98( c );
 				}
 				if ( srt == 0xFE )
-				  ungetch( c );
+				  run68_console_ungetch( c );
 				rd [ 0 ] = c;
 			}
 #endif
@@ -485,9 +423,9 @@ int dos_call( UChar code )
 #elif defined(DOSX)
 		fflush( stdout );
 #endif
-		c = _getch();
+		c = run68_console_getch(FALSE);
 		if ( c == 0x00 ) {
-			c = _getch();
+			c = run68_console_getch(FALSE);
 			c = 0x1B;
 		}
 		rd [ 0 ] = c;
@@ -569,7 +507,7 @@ int dos_call( UChar code )
 		if (func_trace_f) {
 			printf("%-10s\n", "KEYSNS");
 		}
-		if ( _kbhit() != 0 )
+		if ( run68_console_kbhit() != 0 )
 		  rd [ 0 ] = -1;
 		else
 		  rd [ 0 ] = 0;
@@ -693,6 +631,9 @@ int dos_call( UChar code )
 #elif defined(DOSX)
 		dos_getdrive( &drv );
 		rd [ 0 ] = drv - 1;
+#else
+		/* POSIX hosts expose the emulated current directory as drive A:. */
+		rd [ 0 ] = 0;
 #endif
 		break;
 	  case 0x1B:    /* FGETC */
@@ -833,15 +774,13 @@ int dos_call( UChar code )
 				rd [ 0 ] = -26;
 			} else {
 				rd [ 0 ] = ra [ 7 ];
-				usp = ra [ 7 ];
-				SR_S_ON();
+				cpu_set_sr((UShort)sr | 0x2000u);
 			}
 		} else {
 			/* super -> user */
-			ra [ 7 ] = data;
+			usp = data;
 			rd [ 0 ] = 0;
-			usp = 0;
-			SR_S_OFF();
+			cpu_set_sr((UShort)sr & 0xdfffu);
 		}
 		break;
 	  case 0x21:    /* FNCKEY */
@@ -1374,19 +1313,15 @@ static Long Kflush( short mode )
 {
 	UChar    c;
 
-#if defined(WIN32)
-#elif defined(DOSX)
-	while( kbhit() != 0 )
-	  _getch();
-#endif
+	run68_console_flush_input();
 	switch( mode ) {
 	  case 0x01:
-		return( _getche() & 0xFF );
+		return( run68_console_getch(TRUE) & 0xFF );
 	  case 0x07:
 	  case 0x08:
-		c = _getch();
+		c = run68_console_getch(FALSE);
 		if ( c == 0x00 ) {
-			c = _getch();
+			c = run68_console_getch(FALSE);
 			c = 0x1B;
 		}
 		return( c );
@@ -2808,31 +2743,13 @@ static Long Filedate( short hdl, Long dt )
  */
 static Long Getdate()
 {
-	Long       ret;
+	struct tm value;
 
-#if defined(WIN32)
-	SYSTEMTIME stime;
-	//GetSystemTime(&stime);
-	GetLocalTime(&stime);
-	ret = ((Long)(stime.wDayOfWeek) << 16) + (((Long)(stime.wYear) - 1980) << 9) +
-		((Long)(stime.wMonth) << 5) + (Long)(stime.wDay);
-#elif defined(DOSX)
-	struct dos_date_t ddate;
-	dos_getdate( &ddate );
-	ret = (ddate.dayofweek << 16) + ((ddate.year -1980) << 9) +
-		(ddate.month << 5) + ddate.day;
-#else
-	struct tm tm;
-	time_t t = time(NULL);
-	localtime_r(&t, &tm);
-	//	printf("%04d/%02d/%02d %d %02d:%02d:%02d\n",
-	//		   tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-	//		   tm.tm_wday, tm.tm_hour, tm.tm_min, tm.tm_sec);
-	ret = (tm.tm_wday << 16) + ((tm.tm_year + (1980 - 1900)) << 9) +
-			(tm.tm_mon << 5) + tm.tm_mday;
-
-#endif
-	return( ret );
+	if (run68_get_virtual_localtime(&value) == FALSE)
+		return -1;
+	return ((Long)value.tm_wday << 16) |
+	       ((Long)(value.tm_year - 80) << 9) |
+	       ((Long)(value.tm_mon + 1) << 5) | value.tm_mday;
 }
 
 /*
@@ -2841,32 +2758,11 @@ static Long Getdate()
  */
 static Long Setdate( short dt )
 {
+	int year = (((UShort)dt >> 9) & 0x7f) + 1980;
+	int month = ((UShort)dt >> 5) & 0x0f;
+	int day = (UShort)dt & 0x1f;
 
-#if defined(WIN32)
-	SYSTEMTIME stime;
-	BOOL b;
-	stime.wYear  = (dt >> 9) & 0x7F + 1980;
-	stime.wMonth = (dt >> 5) & 0xF;
-	stime.wDay   = dt & 0x1f;
-	stime.wSecond = 0;
-	stime.wMilliseconds = 0;
-	// b = SetSystemTime(&stime);
-	b = SetLocalTime(&stime);
-	if (!b)
-		return -14;     /* パラメータ不正 */
-#elif(DOSX)
-	struct dos_date_t ddate;
-
-	ddate.year  = ((dt >> 9) & 0x7F) + 1980;
-	ddate.month = ((dt >> 5) & 0xF);
-	ddate.day   = (dt & 0x1F);
-
-	if ( dos_setdate( &ddate ) != 0 )
-		return( -14 );        /* パラメータ不正 */
-#else
-	printf("DOSCALL SETDATE:not defined yet %s %d\n", __FILE__, __LINE__ );
-#endif
-	return( 0 );
+	return run68_set_virtual_date(year, month, day) ? 0 : -14;
 }
 
 /*
@@ -2875,41 +2771,14 @@ static Long Setdate( short dt )
  */
 static Long Gettime( int flag )
 {
-	Long       ret;
-#if defined(WIN32)
-	SYSTEMTIME stime;
-	// GetSystemTime(&stime);
-	GetLocalTime(&stime);
-	if ( flag == 0 )
-		// ret = stime.wHour << 11 + stime.wMinute << 5 + stime.wSecond >> 1;
-		ret = ((Long)(stime.wHour) << 11) + ((Long)(stime.wMinute) << 5) + ((Long)(stime.wSecond) >> 1);
-	else
-		// ret = stime.wHour << 16 + stime.wMinute << 8 + stime.wSecond;
-		ret = ((Long)(stime.wHour) << 16) + ((Long)(stime.wMinute) << 8) + (Long)(stime.wSecond);
-#elif defined(DOSX)
-	struct dos_time_t dtime;
-	dos_gettime( &dtime );
+	struct tm value;
 
-	if ( flag == 0 )
-		ret = (dtime.hour << 11) + (dtime.minute << 5) + (dtime.second >> 1);
-	else
-		ret = (dtime.hour << 16) + (dtime.minute << 8) + dtime.second;
-#else
-	
-	struct tm tm;
-	time_t t = time(NULL);
-	localtime_r(&t, &tm);
-//	printf("%04d/%02d/%02d %d %02d:%02d:%02d\n",
-//		   tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-//		   tm.tm_wday, tm.tm_hour, tm.tm_min, tm.tm_sec);
-	
-	if ( flag == 0 )
-		ret = (tm.tm_hour << 11) + (tm.tm_min << 5) + (tm.tm_sec >> 1);
-	else
-		ret = (tm.tm_hour << 16) + (tm.tm_min << 8) + tm.tm_sec;
-
-#endif
-	return( ret );
+	if (run68_get_virtual_localtime(&value) == FALSE)
+		return -1;
+	if (flag == 0)
+		return (value.tm_hour << 11) | (value.tm_min << 5) |
+		       (value.tm_sec >> 1);
+	return (value.tm_hour << 16) | (value.tm_min << 8) | value.tm_sec;
 }
 
 /*
@@ -2918,31 +2787,11 @@ static Long Gettime( int flag )
  */
 static Long Settim2( Long tim )
 {
+	int hour = ((ULong)tim >> 16) & 0xff;
+	int minute = ((ULong)tim >> 8) & 0xff;
+	int second = (ULong)tim & 0xff;
 
-#if defined(WIN32)
-	SYSTEMTIME stime;
-	BOOL b;
-	stime.wYear  = (tim >> 16) & 0x1F;
-	stime.wMonth = (tim >> 8) & 0x3F;
-	stime.wDay   = tim & 0x3f;
-	stime.wSecond = 0;
-	stime.wMilliseconds = 0;
-	b = SetSystemTime(&stime);
-	if (!b)
-		return -14;     /* パラメータ不正 */
-#elif defined(DOSX)
-	struct dos_time_t dtime;
-
-	dtime.hour    = ((tim >> 16) & 0x1F);
-	dtime.minute  = ((tim >> 8) & 0x3F);
-	dtime.second  = (tim & 0x3F);
-	dtime.hsecond = 0;
-	if ( dos_settime( &dtime ) != 0 )
-		return( -14 );        /* パラメータ不正 */
-#else
-	printf("DOSCALL SETTIM2:not defined yet %s %d\n", __FILE__, __LINE__ );
-#endif
-	return( 0 );
+	return run68_set_virtual_time(hour, minute, second) ? 0 : -14;
 }
 
 /*
@@ -3329,9 +3178,9 @@ static Long Keyctrl( short mode, Long stack_adr )
 
 	switch( mode ) {
 	case 0:
-		c = _getch();
+		c = run68_console_getch(FALSE);
 		if ( c == 0x00 ) {
-			c = _getch();
+			c = run68_console_getch(FALSE);
 			if ( c == 0x85 )    /* F11 */
 				c = 0x03;    /* break */
 		} else {
@@ -3339,24 +3188,20 @@ static Long Keyctrl( short mode, Long stack_adr )
 				c = cnv_key98( c );
 		}
 		return( c );
-#if defined(WIN32) || defined(DOSX)
-		//#if defined(WIN32)
-		//#elif defined(DOSX)
 	case 1:        /* キーの先読み */
-		if ( _kbhit() == 0 )
+		if ( run68_console_kbhit() == 0 )
 		  return( 0 );
-		c = _getch();
+		c = run68_console_getch(FALSE);
 		if ( c == 0x00 ) {
-			c = _getch();
+			c = run68_console_getch(FALSE);
 			if ( c == 0x85 )    /* F11 */
 				c = 0x03;    /* break */
 		} else {
 			if ( ini_info.pc98_key == TRUE )
 				c = cnv_key98( c );
 		}
-		_ungetch( c );
+		(void)run68_console_ungetch( c );
 		return( c );
-#endif
 	default:
 		return( 0 );
 	}

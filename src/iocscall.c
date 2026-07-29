@@ -41,14 +41,23 @@
 static Long	Putc( UShort );
 static Long	Color( short );
 static void	Putmes( void );
+static Long	Keydata( int );
+static Long	Datebcd( Long );
+static Long	Dateset( Long );
+static Long	Timebcd( Long );
+static Long	Timeset( Long );
 static Long	Dateget( void );
 static Long	Timeget( void );
 static Long	Datebin( Long );
 static Long	Timebin( Long );
+static Long	Datecnv( Long );
+static Long	Timecnv( Long );
 static Long	Dateasc( Long, Long );
 static Long	Timeasc( Long, Long );
 static void	Dayasc( Long, Long );
 static Long	Intvcs( Long, Long );
+static void	Memstr( BOOL );
+static void	Poke( char );
 static void	Dmamove( Long, Long, Long, Long );
 
 /*
@@ -59,7 +68,6 @@ static void	Dmamove( Long, Long, Long, Long );
 int iocs_call()
 {
 	UChar	*data_ptr;
-	ULong	ul;
 	UChar	no;
 	int	x, y;
 	short	save_s;
@@ -71,6 +79,33 @@ int iocs_call()
         printf( "IOCS(%02X): PC=%06X\n", no, pc );
     }
 	switch( no ) {
+		case 0x00:	/* B_KEYINP */
+			rd[0] = Keydata(run68_console_getch(FALSE));
+			break;
+		case 0x01:	/* B_KEYSNS */
+			if (!run68_console_kbhit()) {
+				rd[0] = 0;
+			} else {
+				int key = run68_console_getch(FALSE);
+				(void)run68_console_ungetch(key);
+				rd[0] = 0x10000 | Keydata(key);
+			}
+			break;
+		case 0x02:	/* B_SFTSNS: modifiers are not observable via a TTY */
+			rd[0] = 0;
+			break;
+		case 0x03:	/* KEY_INIT */
+			run68_console_flush_input();
+			rd[0] = 0;
+			break;
+		case 0x1E:	/* B_CURON */
+			printf("\033[?25h");
+			rd[0] = 0;
+			break;
+		case 0x1F:	/* B_CUROFF */
+			printf("\033[?25l");
+			rd[0] = 0;
+			break;
 		case 0x20:	/* B_PUTC */
 			rd [ 0 ] = Putc( (rd [ 1 ] & 0xFFFF) );
 			break;
@@ -111,12 +146,68 @@ int iocs_call()
 			break;
 		case 0x24:	/* B_DOWN_S */
 			printf( "%c[s\n%c[u%c[1B", 0x1B, 0x1B, 0x1B );
+			rd[0] = 0;
 			break;
 		case 0x25:	/* B_UP_S *//* (スクロール未サポート) */
 			printf( "%c[1A", 0x1B );
+			rd[0] = 0;
+			break;
+		case 0x26:	/* B_UP */
+		case 0x27:	/* B_DOWN */
+		case 0x28:	/* B_RIGHT */
+		case 0x29:	/* B_LEFT */
+			{
+				static const char command[] = {'A', 'B', 'C', 'D'};
+				unsigned count = (unsigned)rd[1] & 0xffu;
+				if (count == 0)
+					count = 1;
+				printf("\033[%u%c", count, command[no - 0x26]);
+				rd[0] = 0;
+			}
+			break;
+		case 0x2A:	/* B_CLR_ST */
+			if ((rd[1] & 0xff) > 2) {
+				rd[0] = -1;
+			} else {
+				unsigned mode = (unsigned)rd[1] & 0xffu;
+				printf("\033[%uJ", mode);
+				if (mode == 2)
+					printf("\033[H");
+				rd[0] = 0;
+			}
+			break;
+		case 0x2B:	/* B_ERA_ST */
+			if ((rd[1] & 0xff) > 2) {
+				rd[0] = -1;
+			} else {
+				printf("\033[%uK", (unsigned)rd[1] & 0xffu);
+				rd[0] = 0;
+			}
+			break;
+		case 0x2C:	/* B_INS */
+		case 0x2D:	/* B_DEL */
+			{
+				unsigned count = (unsigned)rd[1] & 0xffu;
+				if (count == 0)
+					count = 1;
+				printf("\r\033[%u%c", count, no == 0x2C ? 'L' : 'M');
+				rd[0] = 0;
+			}
 			break;
 		case 0x2F:	/* B_PUTMES */
 			Putmes();
+			break;
+		case 0x50:	/* DATEBCD */
+			rd[0] = Datebcd(rd[1]);
+			break;
+		case 0x51:	/* DATESET */
+			rd[0] = Dateset(rd[1]);
+			break;
+		case 0x52:	/* TIMEBCD */
+			rd[0] = Timebcd(rd[1]);
+			break;
+		case 0x53:	/* TIMESET */
+			rd[0] = Timeset(rd[1]);
 			break;
 		case 0x54:	/* DATEGET */
 			rd [ 0 ] = Dateget();
@@ -129,6 +220,12 @@ int iocs_call()
 			break;
 		case 0x57:	/* TIMEBIN */
 			rd [ 0 ] = Timebin( rd [ 1 ] );
+			break;
+		case 0x58:	/* DATECNV */
+			rd[0] = Datecnv(ra[1]);
+			break;
+		case 0x59:	/* TIMECNV */
+			rd[0] = Timecnv(ra[1]);
 			break;
 		case 0x5A:	/* DATEASC */
 			rd [ 0 ] = Dateasc( rd [ 1 ], ra [ 1 ] );
@@ -169,27 +266,11 @@ int iocs_call()
 			err68( "水平同期割り込みを設定しようとしました" );
 			return( TRUE );
 		case 0x7F:	/* ONTIME */
-#if defined(WIN32)
-            ul = GetTickCount() / 1000;
-			rd [ 0 ] = (ul % (60 * 60 * 24)) * 100;
-			rd [ 1 ] = ((ul / (60 * 60 * 24)) & 0xFFFF);
-#elif defined(DOSX)
-			ul = time( NULL );
-			rd [ 0 ] = (ul % (60 * 60 * 24)) * 100;
-			rd [ 1 ] = ((ul / (60 * 60 * 24)) & 0xFFFF);
-#elif defined(__APPLE__) || defined(__EMSCRIPTEN__)
-			ul = time( NULL );
-			rd [ 0 ] = (ul % (60 * 60 * 24)) * 100;
-			rd [ 1 ] = ((ul / (60 * 60 * 24)) & 0xFFFF);
-#else
-            {
-				struct sysinfo info;
-				sysinfo(&info);
-				ul = info.uptime;
-				rd [ 0 ] = (ul % (60 * 60 * 24)) * 100; 
-				rd [ 1 ] = ((ul / (60 * 60 * 24)) & 0xFFFF);
-            }
-#endif
+			{
+				uint64_t elapsed = run68_elapsed_centiseconds();
+				rd[0] = (Long)(elapsed % 8640000u);
+				rd[1] = (Long)((elapsed / 8640000u) & 0xffffu);
+			}
 			break;
 		case 0x80:	/* B_INTVCS */
 			rd [ 0 ] = Intvcs( rd [ 1 ], ra [ 1 ] );
@@ -201,13 +282,13 @@ int iocs_call()
 					rd [ 0 ] = -1;	/* エラー */
 				} else {
 					rd [ 0 ] = ra [ 7 ];
-					SR_S_ON();
+					cpu_set_sr((UShort)sr | 0x2000u);
 				}
 			} else {
 				/* super -> user */
-				ra [ 7 ] = ra [ 1 ];
+				usp = ra [ 1 ];
 				rd [ 0 ] = 0;
-				SR_S_OFF();
+				cpu_set_sr((UShort)sr & 0xdfffu);
 			}
 			break;
 		case 0x82:	/* B_BPEEK */
@@ -236,14 +317,29 @@ int iocs_call()
 				SR_S_OFF();
 			ra [ 1 ] = run68_add32(ra [ 1 ], 4);
 			break;
+		case 0x85:	/* B_MEMSTR */
+			Memstr(TRUE);
+			break;
+		case 0x86:	/* B_BPOKE */
+			Poke(S_BYTE);
+			break;
+		case 0x87:	/* B_WPOKE */
+			Poke(S_WORD);
+			break;
+		case 0x88:	/* B_LPOKE */
+			Poke(S_LONG);
+			break;
+		case 0x89:	/* B_MEMSET */
+			Memstr(FALSE);
+			break;
 		case 0x8A:	/* DMAMOVE */
 			Dmamove( rd [ 1 ], rd [ 2 ], ra [ 1 ], ra [ 2 ] );
 			break;
 		case 0xAE:	/* OS_CURON */
-			printf( "%c[>5l", 0x1B );
+			printf("\033[?25h");
 			break;
 		case 0xAF:	/* OS_CUROF */
-			printf( "%c[>5h", 0x1B );
+			printf("\033[?25l");
 			break;
 		default:
     if (func_trace_f)
@@ -254,6 +350,60 @@ int iocs_call()
 	}
 
 	return( FALSE );
+}
+
+static Long Keydata(int key)
+{
+	static const char letters[] = "qwertyuiopasdfghjklzxcvbnm";
+	static const UChar letter_scans[] = {
+		0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a,
+		0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26,
+		0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30
+	};
+	UChar ascii;
+	UChar scan = 0;
+	const char *letter;
+
+	if (key == EOF)
+		return 0;
+	ascii = (UChar)key;
+	if (ascii == '\n')
+		ascii = '\r';
+	if (ascii >= 'A' && ascii <= 'Z')
+		letter = strchr(letters, ascii - 'A' + 'a');
+	else if (ascii >= 'a' && ascii <= 'z')
+		letter = strchr(letters, ascii);
+	else
+		letter = NULL;
+	if (letter != NULL)
+		scan = letter_scans[letter - letters];
+	else if (ascii >= '1' && ascii <= '9')
+		scan = (UChar)(ascii - '1' + 0x02);
+	else {
+		switch (ascii) {
+		case 0x1b: scan = 0x01; break;
+		case '0': scan = 0x0b; break;
+		case '-': case '=': scan = 0x0c; break;
+		case '^': case '~': scan = 0x0d; break;
+		case '\\': case '|': scan = 0x0e; break;
+		case '\b': scan = 0x0f; break;
+		case '\t': scan = 0x10; break;
+		case '@': case '`': scan = 0x1b; break;
+		case '[': case '{': scan = 0x1c; break;
+		case '\r': scan = 0x1d; break;
+		case ';': case '+': scan = 0x28; break;
+		case ']': case '}': scan = 0x29; break;
+		case ':': case '*': scan = 0x2b; break;
+		case ',': case '<': scan = 0x31; break;
+		case '.': case '>': scan = 0x32; break;
+		case '/': case '?': scan = 0x33; break;
+		case '_': scan = 0x34; break;
+		case ' ': scan = 0x35; break;
+		case 0x7f: scan = 0x37; break;
+		default: break;
+		}
+	}
+	return ((Long)scan << 8) | ascii;
 }
 
 /*
@@ -316,45 +466,120 @@ static void Putmes()
 	ra [ 1 ] = run68_add32(ra [ 1 ], len);
 }
 
+static BOOL Leapyear(int year)
+{
+	return (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))
+	           ? TRUE : FALSE;
+}
+
+static BOOL Validdate(int year, int month, int day)
+{
+	static const UChar month_days[] = {
+		31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+	};
+	int limit;
+
+	if (year < 1980 || year > 2079 || month < 1 || month > 12 || day < 1)
+		return FALSE;
+	limit = month_days[month - 1];
+	if (month == 2 && Leapyear(year))
+		limit++;
+	return day <= limit ? TRUE : FALSE;
+}
+
+static int Weekday(int year, int month, int day)
+{
+	static const int offsets[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+
+	if (month < 3)
+		year--;
+	return (year + year / 4 - year / 100 + year / 400 +
+	        offsets[month - 1] + day) % 7;
+}
+
+static BOOL Isbcd(UChar value)
+{
+	return (value & 0x0f) <= 9 && ((value >> 4) & 0x0f) <= 9;
+}
+
+static UChar Tobcd(int value)
+{
+	return (UChar)(((value / 10) << 4) | (value % 10));
+}
+
+static int Frombcd(UChar value)
+{
+	return ((value >> 4) & 0x0f) * 10 + (value & 0x0f);
+}
+
+static Long Datebcd(Long binary)
+{
+	int year = ((ULong)binary >> 16) & 0x0fff;
+	int month = ((ULong)binary >> 8) & 0xff;
+	int day = (ULong)binary & 0xff;
+	int leap_counter;
+
+	if (!Validdate(year, month, day))
+		return -1;
+	leap_counter = year & 3;
+	return ((Long)leap_counter << 28) | (Weekday(year, month, day) << 24) |
+	       ((Long)Tobcd(year - 1980) << 16) | ((Long)Tobcd(month) << 8) |
+	       Tobcd(day);
+}
+
+static Long Dateset(Long bcd)
+{
+	UChar year_bcd = (UChar)((ULong)bcd >> 16);
+	UChar month_bcd = (UChar)((ULong)bcd >> 8);
+	UChar day_bcd = (UChar)bcd;
+
+	if (!Isbcd(year_bcd) || !Isbcd(month_bcd) || !Isbcd(day_bcd))
+		return -1;
+	return run68_set_virtual_date(1980 + Frombcd(year_bcd),
+	                              Frombcd(month_bcd), Frombcd(day_bcd))
+	           ? 0 : -1;
+}
+
+static Long Timebcd(Long binary)
+{
+	int hour = ((ULong)binary >> 16) & 0xff;
+	int minute = ((ULong)binary >> 8) & 0xff;
+	int second = (ULong)binary & 0xff;
+
+	if (hour > 23 || minute > 59 || second > 59)
+		return -1;
+	return 0x10000000 | ((Long)Tobcd(hour) << 16) |
+	       ((Long)Tobcd(minute) << 8) | Tobcd(second);
+}
+
+static Long Timeset(Long bcd)
+{
+	UChar hour_bcd = (UChar)((ULong)bcd >> 16);
+	UChar minute_bcd = (UChar)((ULong)bcd >> 8);
+	UChar second_bcd = (UChar)bcd;
+
+	if (!Isbcd(hour_bcd) || !Isbcd(minute_bcd) || !Isbcd(second_bcd))
+		return -1;
+	return run68_set_virtual_time(Frombcd(hour_bcd), Frombcd(minute_bcd),
+	                              Frombcd(second_bcd)) ? 0 : -1;
+}
+
 /*
  　機能：日付を得る
  戻り値：BCDの日付データ
 */
 static Long Dateget()
 {
-	Long	ret;
-#if defined(WIN32)
-    SYSTEMTIME st;
-    GetSystemTime(&st);
-	ret = (st.wDayOfWeek << 24);
-	ret |= (((st.wYear - 1980) / 10) << 20);
-	ret |= (((st.wYear - 1980) % 10) << 16);
-	ret |= ((st.wMonth / 10) << 12);
-	ret |= ((st.wMonth % 10) << 8);
-	ret |= ((st.wDay / 10) << 4);
-	ret |= (st.wDay % 10);
-#elif defined(DOSX)
-	struct dos_date_t ddate;
-	dos_getdate( &ddate );
-	ret = (ddate.dayofweek << 24);
-	ret |= (((ddate.year - 1980) / 10) << 20);
-	ret |= (((ddate.year - 1980) % 10) << 16);
-	ret |= ((ddate.month / 10) << 12);
-	ret |= ((ddate.month % 10) << 8);
-	ret |= ((ddate.day / 10) << 4);
-	ret |= (ddate.day % 10);
-#else
-	time_t now = time(NULL);
-	struct tm *t = localtime(&now);
-	ret = (t->tm_wday << 24);
-	ret |= (((t->tm_year - 80) / 10) << 20);
-	ret |= (((t->tm_year - 80) % 10) << 16);
-	ret |= ((t->tm_mon / 10) << 12);
-	ret |= ((t->tm_mon % 10) << 8);
-	ret |= ((t->tm_mday / 10) << 4);
-	ret |= (t->tm_mday % 10);
-#endif
-	return( ret );
+	struct tm value;
+	int year;
+
+	if (run68_get_virtual_localtime(&value) == FALSE)
+		return -1;
+	year = value.tm_year - 80;
+	if (year < 0 || year > 99)
+		return -1;
+	return ((Long)value.tm_wday << 24) | ((Long)Tobcd(year) << 16) |
+	       ((Long)Tobcd(value.tm_mon + 1) << 8) | Tobcd(value.tm_mday);
 }
 
 /*
@@ -363,36 +588,12 @@ static Long Dateget()
 */
 static Long Timeget()
 {
-	Long	ret;
-#if defined(WIN32)
-    SYSTEMTIME st;
-    GetSystemTime(&st);
-	ret  = ((st.wHour / 10) << 20);
-	ret |= ((st.wHour % 10) << 16);
-	ret |= ((st.wMinute / 10) << 12);
-	ret |= ((st.wMinute % 10) << 8);
-	ret |= ((st.wSecond / 10) << 4);
-	ret |= (st.wSecond % 10);
-#elif defined(DOSX)
-	struct dos_time_t dtime;
-	dos_gettime( &dtime );
-	ret  = ((dtime.hour / 10) << 20);
-	ret |= ((dtime.hour % 10) << 16);
-	ret |= ((dtime.minute / 10) << 12);
-	ret |= ((dtime.minute % 10) << 8);
-	ret |= ((dtime.second / 10) << 4);
-	ret |= (dtime.second % 10);
-#else
-	time_t now = time(NULL);
-	struct tm *t = localtime(&now);
-	ret  = ((t->tm_hour / 10) << 20);
-	ret |= ((t->tm_hour % 10) << 16);
-	ret |= ((t->tm_min / 10) << 12);
-	ret |= ((t->tm_min % 10) << 8);
-	ret |= ((t->tm_sec / 10) << 4);
-	ret |= (t->tm_sec % 10);
-#endif
-	return( ret );
+	struct tm value;
+
+	if (run68_get_virtual_localtime(&value) == FALSE)
+		return -1;
+	return 0x10000000 | ((Long)Tobcd(value.tm_hour) << 16) |
+	       ((Long)Tobcd(value.tm_min) << 8) | Tobcd(value.tm_sec);
 }
 
 /*
@@ -406,10 +607,14 @@ static Long Datebin( Long bcd )
 	UShort	month;
 	UShort	day;
 
-	youbi = ( bcd >> 24 );
+	youbi = ((ULong)bcd >> 24) & 0x0f;
 	year  = (( bcd >> 20 ) & 0xF) * 10 + (( bcd >> 16 ) & 0xF) + 1980;
 	month = (( bcd >> 12 ) & 0xF) * 10 + (( bcd >> 8 ) & 0xF);
 	day   = (( bcd >> 4 ) & 0xF) * 10 + (bcd & 0xF);
+	if (!Isbcd((UChar)((ULong)bcd >> 16)) ||
+	    !Isbcd((UChar)((ULong)bcd >> 8)) || !Isbcd((UChar)bcd) ||
+	    youbi > 6 || !Validdate(year, month, day))
+		return -1;
 
 	return( (youbi << 28) | (year << 16) | (month << 8) | day );
 }
@@ -427,8 +632,88 @@ static Long Timebin( Long bcd )
 	hh = (( bcd >> 20 ) & 0xF) * 10 + (( bcd >> 16 ) & 0xF);
 	mm = (( bcd >> 12 ) & 0xF) * 10 + (( bcd >> 8 ) & 0xF);
 	ss = (( bcd >> 4 ) & 0xF) * 10 + (bcd & 0xF);
+	if (!Isbcd((UChar)((ULong)bcd >> 16)) ||
+	    !Isbcd((UChar)((ULong)bcd >> 8)) || !Isbcd((UChar)bcd) ||
+	    hh > 23 || mm > 59 || ss > 59)
+		return -1;
 
 	return( (hh << 16) | (mm << 8) | ss );
+}
+
+static char *Gueststring(Long address, ULong *guest_address)
+{
+	ULong normalized = (ULong)address & 0x00ffffffu;
+	char *text;
+
+	if (normalized >= (ULong)mem_aloc)
+		return NULL;
+	text = prog_ptr + normalized;
+	if (memchr(text, '\0', (size_t)((ULong)mem_aloc - normalized)) == NULL)
+		return NULL;
+	*guest_address = normalized;
+	return text;
+}
+
+static Long Datecnv(Long address)
+{
+	ULong guest_address;
+	char *text = Gueststring(address, &guest_address);
+	char *cursor;
+	char *end;
+	long year;
+	long month;
+	long day;
+
+	if (text == NULL)
+		return -1;
+	year = strtol(text, &end, 10);
+	if (end == text || *end == '\0')
+		return -1;
+	cursor = end + 1;
+	month = strtol(cursor, &end, 10);
+	if (end == cursor || *end == '\0')
+		return -1;
+	cursor = end + 1;
+	day = strtol(cursor, &end, 10);
+	if (end == cursor || *end != '\0')
+		return -1;
+	if (year >= 0 && year <= 79)
+		year += 2000;
+	else if (year >= 80 && year <= 99)
+		year += 1900;
+	if (!Validdate((int)year, (int)month, (int)day))
+		return -1;
+	ra[1] = (Long)(guest_address + (ULong)(end - text));
+	return (Weekday((int)year, (int)month, (int)day) << 28) |
+	       ((Long)year << 16) | ((Long)month << 8) | (Long)day;
+}
+
+static Long Timecnv(Long address)
+{
+	ULong guest_address;
+	char *text = Gueststring(address, &guest_address);
+	char *cursor;
+	char *end;
+	long hour;
+	long minute;
+	long second;
+
+	if (text == NULL)
+		return -1;
+	hour = strtol(text, &end, 10);
+	if (end == text || *end != ':')
+		return -1;
+	cursor = end + 1;
+	minute = strtol(cursor, &end, 10);
+	if (end == cursor || *end != ':')
+		return -1;
+	cursor = end + 1;
+	second = strtol(cursor, &end, 10);
+	if (end == cursor || *end != '\0' || hour < 0 || hour > 23 ||
+	    minute < 0 || minute > 59 || second < 0 || second > 59)
+		return -1;
+	ra[1] = (Long)(guest_address + (ULong)(end - text));
+	return ((Long)hour << 16) | ((Long)minute << 8) | (Long)second;
 }
 
 /*
@@ -458,7 +743,7 @@ static Long Dateasc( Long data, Long adr )
 	if ( month < 1 || month > 12 )
 		return( -1 );
 	day = (data & 0xFF);
-	if ( day < 1 || day > 31 )
+	if (!Validdate(year, month, day))
 		return( -1 );
 
 	switch( form ) {
@@ -525,37 +810,21 @@ static Long Timeasc( Long data, Long adr )
 */
 static void Dayasc( Long data, Long adr )
 {
-	char	*data_ptr;
+	static const UChar sjis[][2] = {
+		{0x93, 0xfa}, {0x8c, 0x8e}, {0x89, 0xce}, {0x90, 0x85},
+		{0x96, 0xd8}, {0x8b, 0xe0}, {0x93, 0x79}
+	};
+	ULong guest_address = (ULong)adr & 0x00ffffffu;
+	UChar *data_ptr;
 
-	data_ptr = prog_ptr + adr;
-
-	switch( data ) {
-		case 0:
-			strcpy( data_ptr, "日" );
-			break;
-		case 1:
-			strcpy( data_ptr, "月" );
-			break;
-		case 2:
-			strcpy( data_ptr, "火" );
-			break;
-		case 3:
-			strcpy( data_ptr, "水" );
-			break;
-		case 4:
-			strcpy( data_ptr, "木" );
-			break;
-		case 5:
-			strcpy( data_ptr, "金" );
-			break;
-		case 6:
-			strcpy( data_ptr, "土" );
-			break;
-		default:
-			ra [ 1 ] = run68_sub32(ra [ 1 ], 2);
-			break;
-	}
-	ra [ 1 ] = run68_add32(ra [ 1 ], 2);
+	if ((ULong)data > 6u || guest_address >= (ULong)mem_aloc ||
+	    (ULong)mem_aloc - guest_address < 3u)
+		return;
+	data_ptr = (UChar *)prog_ptr + guest_address;
+	data_ptr[0] = sjis[data][0];
+	data_ptr[1] = sjis[data][1];
+	data_ptr[2] = '\0';
+	ra[1] = run68_add32(ra[1], 2);
 }
 
 /*
@@ -580,28 +849,77 @@ static Long Intvcs( Long no, Long adr )
 	return( mae );
 }
 
+static void Memstr(BOOL read_direction)
+{
+	ULong count = (ULong)rd[1] + 1u;
+	Long source = read_direction ? ra[1] : ra[2];
+	Long destination = read_direction ? ra[2] : ra[1];
+	short save_s = SR_S_REF();
+
+	SR_S_ON();
+	while (count-- != 0) {
+		Long value = mem_get(source, S_BYTE);
+		mem_set(destination, value, S_BYTE);
+		source = run68_add32(source, 1);
+		destination = run68_add32(destination, 1);
+	}
+	if (save_s == 0)
+		SR_S_OFF();
+	if (read_direction) {
+		ra[1] = source;
+		ra[2] = destination;
+	} else {
+		ra[1] = destination;
+		ra[2] = source;
+	}
+	rd[1] = -1;
+}
+
+static void Poke(char size)
+{
+	static const Long widths[] = {1, 2, 4};
+	short save_s = SR_S_REF();
+
+	SR_S_ON();
+	mem_set(ra[1], rd[1], size);
+	if (save_s == 0)
+		SR_S_OFF();
+	ra[1] = run68_add32(ra[1], widths[(int)size]);
+}
+
 /*
  　機能：DMA転送をする
  戻り値：設定前の処理アドレス
 */
 static void Dmamove( Long md, Long size, Long adr1, Long adr2 )
 {
-	char	*p1;
-	char	*p2;
-	Long	tmp;
+	unsigned a1_mode = ((ULong)md >> 2) & 3u;
+	unsigned a2_mode = (ULong)md & 3u;
+	ULong remaining = (ULong)size;
+	short save_s = SR_S_REF();
 
-	if ( (md & 0x80) != 0 ) {
-		/* adr1 -> adr2転送にする */
-		tmp = adr1;
-		adr1 = adr2;
-		adr2 = tmp;
-	}
-
-	/* adr1,adr2共にインクリメントモードでない場合は未サポート */
-	if ( (md & 0x0F) != 5 )
+	if (a1_mode == 3 || a2_mode == 3) {
+		rd[0] = -1;
 		return;
-
-	p1 = prog_ptr + adr1;
-	p2 = prog_ptr + adr2;
-	memcpy( p2, p1, size );
+	}
+	SR_S_ON();
+	while (remaining-- != 0) {
+		if ((md & 0x80) == 0)
+			mem_set(adr2, mem_get(adr1, S_BYTE), S_BYTE);
+		else
+			mem_set(adr1, mem_get(adr2, S_BYTE), S_BYTE);
+		if (a1_mode == 1)
+			adr1 = run68_add32(adr1, 1);
+		else if (a1_mode == 2)
+			adr1 = run68_sub32(adr1, 1);
+		if (a2_mode == 1)
+			adr2 = run68_add32(adr2, 1);
+		else if (a2_mode == 2)
+			adr2 = run68_sub32(adr2, 1);
+	}
+	if (save_s == 0)
+		SR_S_OFF();
+	ra[1] = adr1;
+	ra[2] = adr2;
+	rd[2] = 0;
 }
