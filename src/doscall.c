@@ -78,10 +78,12 @@
   #include <sys/statvfs.h>
   #include <termios.h>
   #include <unistd.h>
+  #include <fcntl.h>
 #elif defined(__EMSCRIPTEN__)
   #include <time.h>
   #include <dirent.h>
   #include <unistd.h>
+  #include <fcntl.h>
 #else
   #include <time.h>
   #include <dirent.h>
@@ -189,15 +191,27 @@ int _dos_getfileattr( char* name, void *ret ) {
 int _dos_setfileattr( char* name, short attr ) {
 	struct stat info;
 	mode_t mode;
+	int fd;
+	int rc;
 
-	if (stat(name, &info) != 0)
+	fd = open(name, O_RDONLY);
+	if (fd < 0)
 		return errno == 0 ? -1 : errno;
+
+	if (fstat(fd, &info) != 0) {
+		rc = errno == 0 ? -1 : errno;
+		close(fd);
+		return rc;
+	}
 	mode = info.st_mode;
 	if ((attr & 0x01) != 0)
 		mode &= (mode_t)~(S_IWUSR | S_IWGRP | S_IWOTH);
 	else
 		mode |= S_IWUSR;
-	return chmod(name, mode) == 0 ? 0 : (errno == 0 ? -1 : errno);
+
+	rc = fchmod(fd, mode) == 0 ? 0 : (errno == 0 ? -1 : errno);
+	close(fd);
+	return rc;
 }
 
 int _dos_write( int fd, const void* data, unsigned size, unsigned *res ) {
