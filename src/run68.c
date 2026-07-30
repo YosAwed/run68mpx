@@ -647,7 +647,11 @@ NextInstruction:
             continue;
         }
 		cpu_instruction_active = TRUE;
-        ecode = cpu_backend_execute_one();
+		ecode = audio_device != NULL && cpu_backend_is_musashi() &&
+		        !debug_flag && !debug_on &&
+		        !x68k_audio_irq_asserted(audio_device)
+			? cpu_backend_execute_cycles(256)
+			: cpu_backend_execute_one();
 		cpu_instruction_active = FALSE;
 		x68k_audio_advance_cpu_cycles(audio_device,
 		                              cpu_backend_last_cycles());
@@ -775,7 +779,11 @@ NextInstruction:
 			continue;
 		}
 		cpu_instruction_active = TRUE;
-		ecode = cpu_backend_execute_one();
+		ecode = audio_device != NULL && cpu_backend_is_musashi() &&
+		        !debug_flag && !debug_on &&
+		        !x68k_audio_irq_asserted(audio_device)
+			? cpu_backend_execute_cycles(256)
+			: cpu_backend_execute_one();
 		cpu_instruction_active = FALSE;
 		x68k_audio_advance_cpu_cycles(audio_device,
 		                              cpu_backend_last_cycles());

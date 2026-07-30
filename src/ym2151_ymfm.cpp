@@ -84,6 +84,8 @@ private:
 
 int16_t clamp_sample(int32_t value)
 {
+	// The X68000 routes each YM2151 output to its speaker at 0.5 gain.
+	value /= 2;
 	return static_cast<int16_t>(std::clamp(value, -32768, 32767));
 }
 

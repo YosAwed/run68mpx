@@ -4,8 +4,9 @@
 #include <string.h>
 
 enum {
-	MSM6258_MIN_SIGNAL = -2048,
-	MSM6258_MAX_SIGNAL = 2047,
+	/* The X68000 configures the MSM6258 for its 10-bit output mode. */
+	MSM6258_MIN_SIGNAL = -512,
+	MSM6258_MAX_SIGNAL = 511,
 	MSM6258_MAX_STEP = 48
 };
 
@@ -17,8 +18,6 @@ struct X68K_MSM6258 {
 	uint32_t sample_divisor;
 	int signal;
 	int step;
-	int previous_input;
-	int filter_output;
 	uint8_t pan;
 	int active;
 	int paused;
@@ -125,12 +124,11 @@ int x68k_msm6258_start(X68K_MSM6258 *device, const uint8_t *data,
 	device->data = copy;
 	device->length = length;
 	device->nibble_position = 0;
-	device->sample_phase = 0;
 	device->sample_divisor = rate_divisors[frequency];
-	device->signal = 0;
+	/* The hardware presents the first decoded nibble on the first tick. */
+	device->sample_phase = device->sample_divisor - 1u;
+	device->signal = -2;
 	device->step = 0;
-	device->previous_input = 0;
-	device->filter_output = 0;
 	device->pan = (uint8_t)pan;
 	device->active = length != 0;
 	device->paused = 0;
@@ -165,8 +163,7 @@ void x68k_msm6258_mix(X68K_MSM6258 *device, int16_t *samples,
 	if (device == NULL || samples == NULL)
 		return;
 	for (frame = 0; frame < frames; ++frame) {
-		int input = 0;
-		int output;
+		int output = 0;
 
 		if (device->active && !device->paused) {
 			device->sample_phase++;
@@ -176,14 +173,9 @@ void x68k_msm6258_mix(X68K_MSM6258 *device, int16_t *samples,
 					break;
 			}
 			if (device->active)
-				input = device->signal * 16;
+				/* 10-bit DAC output, mixed at the X68000's 0.5 route gain. */
+				output = device->signal * 8;
 		}
-		/* A small DC blocker approximates the X68000 ADPCM output filter. */
-		output = input - device->previous_input +
-		         (device->filter_output * 255) / 256;
-		device->previous_input = input;
-		device->filter_output = output;
-		output /= 2;
 
 		/* IOCS pan: 0=off, 1=left, 2=right, 3=both. */
 		if ((device->pan & 1u) != 0)

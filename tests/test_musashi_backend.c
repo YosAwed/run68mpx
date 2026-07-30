@@ -191,6 +191,27 @@ int main(void)
 	cpu_backend_execute_one();
 	expect_u32("vectored IRQ6 return PC", 0x10000, (ULong)pc);
 
+	/* Batched execution must stop immediately when an HLE call terminates. */
+	put_word(0x10000, 0x7001); /* moveq #1,d0 */
+	put_word(0x10002, 0x5280); /* addq.l #1,d0 */
+	put_word(0x10004, 0xff4c); /* terminating DOSCALL HLE */
+	put_word(0x10006, 0x5285); /* must not execute */
+	pc = 0x10000;
+	rd[0] = 0;
+	rd[5] = 0;
+	ra[7] = 0x30000;
+	usp = 0x30000;
+	ssp = 0x31000;
+	sr = 0;
+	fline_should_finish = TRUE;
+	cpu_backend_prepare();
+	if (cpu_backend_execute_cycles(256) != TRUE) {
+		fprintf(stderr, "terminating batched DOSCALL did not stop execution\n");
+		return 1;
+	}
+	expect_u32("batched fline pc", 0x10006, (ULong)pc);
+	expect_u32("instruction after batched fline", 0, (ULong)rd[5]);
+
 	free(prog_ptr);
 	return 0;
 }

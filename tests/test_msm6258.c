@@ -26,6 +26,22 @@ static int channel_nonzero(const int16_t *samples, size_t frames,
 	return 0;
 }
 
+static int channel_peak(const int16_t *samples, size_t frames,
+	unsigned int channel)
+{
+	size_t frame;
+	int peak = 0;
+
+	for (frame = 0; frame < frames; ++frame) {
+		int value = samples[frame * 2 + channel];
+		int magnitude = value < 0 ? -value : value;
+
+		if (magnitude > peak)
+			peak = magnitude;
+	}
+	return peak;
+}
+
 int main(void)
 {
 	static const uint8_t rising_sample[] = {0x77, 0x77, 0x77, 0x77};
@@ -45,6 +61,9 @@ int main(void)
 	x68k_msm6258_mix(device, samples, 64);
 	expect_true("left output", channel_nonzero(samples, 64, 0));
 	expect_true("right output", channel_nonzero(samples, 64, 1));
+	expect_true("10-bit output range",
+	            channel_peak(samples, 64, 0) <= 4096);
+	expect_true("first nibble on first tick", samples[0] == 224);
 
 	memset(samples, 0, sizeof(samples));
 	expect_true("start left",
