@@ -190,7 +190,14 @@ static void test_register_shifts(void)
 		UINT32_C(0x80808080), UINT32_C(0xffffffff),
 		UINT32_C(0xa55a3cc3)
 	};
-	static const unsigned register_counts[] = {0, 1, 7, 8, 15, 16, 31, 32, 33, 63};
+	static const unsigned register_counts[] = {
+		0, 1, 7, 8, 15, 16, 31, 32, 33, 63,
+		UINT32_C(0xffffffff), /* -1 */
+		UINT32_C(0xfffffffe), /* -2 */
+		UINT32_C(0xffffffc0), /* -64 */
+		UINT32_C(0xffffffbf), /* -65 */
+		UINT32_C(0x80000000)  /* INT32_MIN */
+	};
 	int operation;
 	int left;
 	int size;
