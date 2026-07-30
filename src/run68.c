@@ -72,6 +72,8 @@
 #include <string.h>
 #include "run68.h"
 #include "cpu_backend.h"
+#include "x68k_audio.h"
+#include "x68k_bus.h"
 #if defined(DOSX)
 #include <dos.h>
 #endif
@@ -81,6 +83,7 @@
 static  int     exec_trap(BOOL *restart);
 static  int     exec_notrap(BOOL *restart);
 static  void    trap_table_make( void );
+static  void    make_iocs_stub(UChar number, Long address);
 extern char *disassemble(Long addr, Long* next_addr);
 
  /* フラグ(グローバル変数) */
@@ -118,6 +121,23 @@ char *strlwr(char *str)
  /* 命令実行情報(グローバル変数) */
 EXEC_INSTRUCTION_INFO OP_info;
 BOOL cpu_instruction_active = FALSE;
+static X68K_AUDIO *audio_device;
+
+static int run68_adpcm_start(void *context, const UChar *data,
+	size_t length, UShort mode)
+{
+	return x68k_audio_adpcm_start((X68K_AUDIO *)context, data, length, mode);
+}
+
+static int run68_adpcm_control(void *context, int mode)
+{
+	return x68k_audio_adpcm_control((X68K_AUDIO *)context, mode);
+}
+
+static int run68_adpcm_status(const void *context)
+{
+	return x68k_audio_adpcm_status((const X68K_AUDIO *)context);
+}
 
 int main( int argc, char *argv[], char *envp[] )
 {
@@ -137,11 +157,18 @@ int main( int argc, char *argv[], char *envp[] )
 	int argbase = 0;        /* アプリケーションコマンドラインの開始位置 */
 	int ret;
 	BOOL restart;
+	const char *audio_wav_path;
+	BOOL audio_live;
+	BOOL raw_input_active;
 
 	debug_flag = FALSE;
 Restart:
     arg_len = 0;
-    argbase = 0;
+	argbase = 0;
+	audio_wav_path = NULL;
+	audio_live = FALSE;
+	raw_input_active = FALSE;
+	x68k_bus_reset();
     /* コマンドライン解析 */
     for (i = 1; i < argc; i ++)
     {
@@ -150,6 +177,20 @@ Restart:
         {
             BOOL invalid_flag = FALSE;
             char *fsp = argv[i];
+            if (strcmp(argv[i], "--audio=live") == 0) {
+                audio_live = TRUE;
+                audio_wav_path = NULL;
+                continue;
+            }
+            if (strncmp(argv[i], "--audio=wav:", 12) == 0) {
+                audio_wav_path = argv[i] + 12;
+                audio_live = FALSE;
+                if (audio_wav_path[0] == '\0') {
+                    fprintf(stderr, "--audio=wav: には出力先が必要です。\n");
+                    return 1;
+                }
+                continue;
+            }
             if (strncmp(argv[i], "--cpu=", 6) == 0) {
                 if (!cpu_backend_select(argv[i] + 6)) {
                     fprintf(stderr, "不明なMPUバックエンドです: %s\n", argv[i] + 6);
@@ -225,6 +266,11 @@ Restart:
         }
     }
     argbase = i; /* argbase以前の引数はすべてオプションである。*/
+	if ((audio_live || audio_wav_path != NULL) &&
+	    !cpu_backend_is_musashi()) {
+		fprintf(stderr, "音声出力は現在 --cpu=musashi が必要です。\n");
+		return 1;
+	}
 	if ( argc - argbase == 0 ) {
 #if defined(WIN32) || defined(DOSX)
 		strcpy( fname, "run68.exe" );
@@ -254,6 +300,8 @@ Restart:
 		fprintf(stderr, "             -t         mpu trace\n");
 		fprintf(stderr, "             -debug     run with debugger\n");
 		fprintf(stderr, "             --cpu=legacy|musashi  select MPU backend\n");
+		fprintf(stderr, "             --audio=live          play YM2151 in real time\n");
+		fprintf(stderr, "             --audio=wav:file      write YM2151 audio\n");
 //		fprintf(stderr, "             -S  size   実行時スタックサイズ指定(単位KB、未実装)\n");
 		return( 1 );
 	}
@@ -264,7 +312,7 @@ Restart:
 	read_ini(ini_file_name, fname);
 
 	/* メモリを確保する */
-	if ( (prog_ptr=malloc( mem_aloc )) == NULL ) {
+	if ( (prog_ptr=calloc( 1, mem_aloc )) == NULL ) {
 		fprintf(stderr, "メモリが確保できません\n");
 		return( 1 );
 	}
@@ -302,7 +350,7 @@ Restart:
 	mem_set( ra [ 3 ] + 4 + env_len, 0, S_BYTE );
 #endif
 	/* 実行ファイルのオープン */
-	if ( strlen( argv[1] ) > 88 ) {
+	if ( strlen( argv[argbase] ) > 88 ) {
 		fprintf(stderr, "ファイルのパス名が長すぎます\n");
 		return( 1 );
 	}
@@ -337,7 +385,7 @@ Restart:
 	/* コマンドライン文字列設定 */
 	arg_ptr = prog_ptr + ra [ 2 ];
 	for ( i = argbase+1; i < argc; i++ ) {
-		if ( i > 2 ) {
+		if ( i > argbase + 1 ) {
 			arg_len ++;
 			*(arg_ptr + arg_len) = ' ';
 		}
@@ -393,6 +441,31 @@ Restart:
 	finfo [ 1 ].mode = 1;
 	finfo [ 2 ].mode = 1;
 	trap_table_make();
+	if (audio_live || audio_wav_path != NULL) {
+		audio_device = audio_live ? x68k_audio_create_live() :
+		                              x68k_audio_create_wav(audio_wav_path);
+		if (audio_device == NULL) {
+			if (audio_live)
+				fprintf(stderr, "リアルタイム音声出力を開始できません。\n");
+			else
+				fprintf(stderr, "WAV出力を開始できません: %s\n",
+				        audio_wav_path);
+			term(TRUE);
+			return 1;
+		}
+	}
+	iocs_set_adpcm_backend(audio_device, run68_adpcm_start,
+	                      run68_adpcm_control, run68_adpcm_status);
+	if (audio_live) {
+		if (!run68_console_begin_raw_input()) {
+			fprintf(stderr, "端末を1キー入力モードに変更できません。\n");
+			(void)x68k_audio_destroy(audio_device);
+			audio_device = NULL;
+			term(TRUE);
+			return 1;
+		}
+		raw_input_active = TRUE;
+	}
 
 	/* 実行 */
 	ra [ 7 ] = STACK_TOP + STACK_SIZE;
@@ -406,6 +479,19 @@ Restart:
 		ret = exec_trap(&restart);
 	else
 		ret = exec_notrap(&restart);
+	if (raw_input_active)
+		run68_console_end_raw_input();
+	iocs_set_adpcm_backend(NULL, NULL, NULL, NULL);
+	if (func_trace_f) {
+		fprintf(stderr, "OPM register writes: %llu\n",
+		        (unsigned long long)x68k_bus_opm_write_count());
+	}
+	if (x68k_audio_destroy(audio_device) != 0) {
+		fprintf(stderr, "音声出力の完了に失敗しました。\n");
+		if (ret == 0)
+			ret = 1;
+	}
+	audio_device = NULL;
 
 	/* 終了 */
 	if (trace_f || func_trace_f)
@@ -563,6 +649,17 @@ NextInstruction:
 		cpu_instruction_active = TRUE;
         ecode = cpu_backend_execute_one();
 		cpu_instruction_active = FALSE;
+		x68k_audio_advance_cpu_cycles(audio_device,
+		                              cpu_backend_last_cycles());
+		{
+			int mfp_vector = x68k_bus_opm_irq_vector();
+			BOOL irq_enabled = iocs_opm_interrupt_handler() != 0 ||
+			                   mfp_vector >= 0;
+			cpu_backend_set_irq_vector(
+				audio_device != NULL && irq_enabled &&
+				x68k_audio_irq_asserted(audio_device) ? 6 : 0,
+				iocs_opm_interrupt_handler() != 0 ? -1 : mfp_vector);
+		}
         if (ecode == TRUE)
         {
             running = FALSE;
@@ -680,6 +777,17 @@ NextInstruction:
 		cpu_instruction_active = TRUE;
 		ecode = cpu_backend_execute_one();
 		cpu_instruction_active = FALSE;
+		x68k_audio_advance_cpu_cycles(audio_device,
+		                              cpu_backend_last_cycles());
+		{
+			int mfp_vector = x68k_bus_opm_irq_vector();
+			BOOL irq_enabled = iocs_opm_interrupt_handler() != 0 ||
+			                   mfp_vector >= 0;
+			cpu_backend_set_irq_vector(
+				audio_device != NULL && irq_enabled &&
+				x68k_audio_irq_asserted(audio_device) ? 6 : 0,
+				iocs_opm_interrupt_handler() != 0 ? -1 : mfp_vector);
+		}
 		if (ecode == TRUE) {
 			running = FALSE;
 			if (debug_flag)
@@ -722,10 +830,26 @@ static void trap_table_make()
 	mem_set( HUMAN_WORK    , 0x4e73, S_WORD );	/* 0x4e73 = rte */
 	mem_set( HUMAN_WORK + 2, 0x4e75, S_WORD );	/* 0x4e75 = rts */
 
+	/* IRQ6 wrapper: save registers, call the IOCS OPM handler, then RTE. */
+	mem_set(OPM_IRQ_WORK + 0x00, 0x48e7, S_WORD); /* movem.l ..., -(sp) */
+	mem_set(OPM_IRQ_WORK + 0x02, 0xfffe, S_WORD);
+	mem_set(OPM_IRQ_WORK + 0x04, 0x2079, S_WORD); /* movea.l callback,a0 */
+	mem_set(OPM_IRQ_WORK + 0x06, OPM_CALLBACK_WORK, S_LONG);
+	mem_set(OPM_IRQ_WORK + 0x0a, 0x4e90, S_WORD); /* jsr (a0) */
+	mem_set(OPM_IRQ_WORK + 0x0c, 0x4cdf, S_WORD); /* movem.l (sp)+,... */
+	mem_set(OPM_IRQ_WORK + 0x0e, 0x7fff, S_WORD);
+	mem_set(OPM_IRQ_WORK + 0x10, 0x4e73, S_WORD); /* rte */
+	mem_set(0x78, OPM_IRQ_WORK, S_LONG);           /* level 6 autovector */
+	mem_set(OPM_CALLBACK_WORK, 0, S_LONG);
+	iocs_audio_reset();
+
 	/* IOCSコールベクタの設定 */
 	for( i = 0; i < 256; i ++ ) {
 		mem_set( 0x400 + i * 4, HUMAN_WORK + 2, S_LONG );
 	}
+	make_iocs_stub(0x68, IOCS_AUDIO_WORK + 0x00);
+	make_iocs_stub(0x69, IOCS_AUDIO_WORK + 0x06);
+	make_iocs_stub(0x6a, IOCS_AUDIO_WORK + 0x0c);
 
 	/* IOCSワークの設定 */
 	mem_set( 0x970, 79, S_WORD );		/* 画面の桁数-1 */
@@ -737,6 +861,14 @@ static void trap_table_make()
 	}
 
 	SR_S_OFF();
+}
+
+static void make_iocs_stub(UChar number, Long address)
+{
+	mem_set(address + 0, 0x7000 | number, S_WORD); /* moveq #number,d0 */
+	mem_set(address + 2, 0x4e4f, S_WORD);          /* trap #15 */
+	mem_set(address + 4, 0x4e75, S_WORD);          /* rts */
+	mem_set(0x400 + number * 4, address, S_LONG);
 }
 
 /*

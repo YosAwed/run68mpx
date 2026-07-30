@@ -10,6 +10,14 @@ static ULong opcode_fetch_address = 0;
 static BOOL musashi_step_active = FALSE;
 static BOOL musashi_instruction_seen = FALSE;
 static jmp_buf musashi_step_boundary;
+static unsigned int last_cycles = 0;
+static int irq_ack_vector = M68K_INT_ACK_AUTOVECTOR;
+
+static int musashi_int_ack_callback(int level)
+{
+	(void)level;
+	return irq_ack_vector;
+}
 
 static void musashi_sync_to_core(void)
 {
@@ -153,6 +161,7 @@ void cpu_backend_prepare(void)
 	m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 	m68k_set_instr_hook_callback(musashi_instruction_hook);
 	m68k_set_trap_instr_callback(musashi_trap_callback);
+	m68k_set_int_ack_callback(musashi_int_ack_callback);
 	initial_sr = sr;
 	m68k_pulse_reset();
 	/* Drain the reset delay without executing a guest instruction. */
@@ -164,6 +173,7 @@ void cpu_backend_prepare(void)
 
 BOOL cpu_backend_execute_one(void)
 {
+	last_cycles = 0;
 	if (selected_backend == RUN68_CPU_LEGACY)
 		return prog_exec();
 
@@ -173,10 +183,29 @@ BOOL cpu_backend_execute_one(void)
 	musashi_instruction_seen = FALSE;
 	musashi_step_active = TRUE;
 	if (setjmp(musashi_step_boundary) == 0)
-		(void)m68k_execute(1);
+		last_cycles = (unsigned int)m68k_execute(1);
+	else
+		last_cycles = (unsigned int)m68k_cycles_run();
 	musashi_step_active = FALSE;
 	musashi_sync_from_core();
 	return musashi_finished;
+}
+
+unsigned int cpu_backend_last_cycles(void)
+{
+	return last_cycles;
+}
+
+void cpu_backend_set_irq(unsigned int level)
+{
+	cpu_backend_set_irq_vector(level, M68K_INT_ACK_AUTOVECTOR);
+}
+
+void cpu_backend_set_irq_vector(unsigned int level, int vector)
+{
+	irq_ack_vector = vector < 0 ? M68K_INT_ACK_AUTOVECTOR : vector;
+	if (selected_backend == RUN68_CPU_MUSASHI)
+		m68k_set_irq(level > 7 ? 7 : level);
 }
 
 unsigned int m68k_read_memory_8(unsigned int address)

@@ -13,11 +13,14 @@ if(USE_ICONV)
 endif()
 
 
-project(run68 C)
+project(run68 C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (EMSCRIPTEN)
 set(CMAKE_EXE_LINKER_FLAGS "--embed-file ./fs@ -sFORCE_FILESYSTEM")
@@ -72,7 +75,10 @@ set(SRC
     src/linef.c
     src/load.c
     src/mem.c
+    src/msm6258.c
     src/run68.c
+    src/x68k_audio.c
+    src/x68k_bus.c
     src/iocscall.c
     src/doscall.c
     src/run68.h
@@ -82,7 +88,20 @@ if(UNIX OR EMSCRIPTEN)
   list(APPEND SRC src/filesearch.c)
 endif()
 
+if(APPLE)
+  list(APPEND SRC src/x68k_audio_live_apple.c)
+endif()
+
 add_executable(run68 ${SRC})
+
+add_library(run68_ymfm STATIC
+  src/ym2151_ymfm.cpp
+  third_party/ymfm/ymfm_opm.cpp
+)
+target_include_directories(run68_ymfm PUBLIC
+  src
+  third_party/ymfm
+)
 
 add_library(run68_musashi STATIC
   third_party/musashi/m68kcpu.c
@@ -100,13 +119,43 @@ target_compile_definitions(run68_musashi PUBLIC
 
 set(LIBS m) # math lib
 
+if(APPLE)
+  find_library(AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+  find_library(AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
+  find_library(COREAUDIO_FRAMEWORK CoreAudio REQUIRED)
+  find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+  list(APPEND LIBS ${AUDIOTOOLBOX_FRAMEWORK} ${AUDIOUNIT_FRAMEWORK}
+                   ${COREAUDIO_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
+endif()
+
 if(USE_ICONV)
   if(APPLE)
     set(LIBS ${LIBS} "iconv")
   endif()
 endif()
 
-target_link_libraries(run68 PUBLIC run68_musashi ${LIBS})
+target_link_libraries(run68 PUBLIC run68_musashi run68_ymfm ${LIBS})
+
+set(RUN68_HAS "${CMAKE_CURRENT_SOURCE_DIR}/tests/HAS.X")
+set(RUN68_HLK "${CMAKE_CURRENT_SOURCE_DIR}/tests/hlk.r")
+if(EXISTS "${RUN68_HAS}" AND EXISTS "${RUN68_HLK}")
+  file(RELATIVE_PATH RUN68_BUILD_REL
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+  add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/MXPLAY.X"
+    BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/mxplay.o"
+    COMMAND $<TARGET_FILE:run68> --cpu=musashi tests/HAS.X
+      -o "${RUN68_BUILD_REL}/mxplay.o" guest/mxplay.s
+    COMMAND $<TARGET_FILE:run68> --cpu=musashi tests/hlk.r
+      -o "${RUN68_BUILD_REL}/MXPLAY.X"
+      "${RUN68_BUILD_REL}/mxplay.o"
+    DEPENDS run68 "${RUN68_HAS}" "${RUN68_HLK}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/guest/mxplay.s"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    VERBATIM
+  )
+  add_custom_target(mxplay DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/MXPLAY.X")
+endif()
 
 include(CTest)
 
@@ -123,9 +172,39 @@ if(BUILD_TESTING)
     tests/test_mem.c
     src/mem.c
     src/exceptions.c
+    src/x68k_bus.c
   )
   target_include_directories(run68_test_mem PRIVATE src)
   add_test(NAME memory_access COMMAND run68_test_mem)
+
+  add_executable(run68_test_ym2151
+    tests/test_ym2151_ymfm.cpp
+    src/x68k_bus.c
+  )
+  target_include_directories(run68_test_ym2151 PRIVATE src)
+  target_link_libraries(run68_test_ym2151 PRIVATE run68_ymfm)
+  add_test(NAME ym2151_ymfm COMMAND run68_test_ym2151)
+
+  add_executable(run68_test_audio_wav
+    tests/test_x68k_audio.c
+    src/msm6258.c
+    src/x68k_audio.c
+    src/x68k_bus.c
+  )
+  if(APPLE)
+    target_sources(run68_test_audio_wav PRIVATE src/x68k_audio_live_apple.c)
+  endif()
+  target_include_directories(run68_test_audio_wav PRIVATE src)
+  target_link_libraries(run68_test_audio_wav PRIVATE run68_ymfm ${LIBS})
+  add_test(NAME audio_wav COMMAND run68_test_audio_wav
+    ${CMAKE_CURRENT_BINARY_DIR}/run68-test-opm.wav)
+
+  add_executable(run68_test_msm6258
+    tests/test_msm6258.c
+    src/msm6258.c
+  )
+  target_include_directories(run68_test_msm6258 PRIVATE src)
+  add_test(NAME msm6258_adpcm COMMAND run68_test_msm6258)
 
   add_executable(run68_test_line8
     tests/test_line8.c
@@ -266,6 +345,9 @@ if(RUN68_ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     foreach(test_target
             run68_test_musashi_backend
             run68_test_mem
+            run68_test_ym2151
+            run68_test_audio_wav
+            run68_test_msm6258
             run68_test_line8
             run68_test_compat
             run68_test_load
@@ -284,6 +366,7 @@ if(RUN68_ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
       target_compile_options(${test_target} PRIVATE ${RUN68_SANITIZER_FLAGS})
       target_link_options(${test_target} PRIVATE ${RUN68_SANITIZER_FLAGS})
     endforeach()
+    target_compile_options(run68_ymfm PRIVATE ${RUN68_SANITIZER_FLAGS})
     if(UNIX OR EMSCRIPTEN)
       target_compile_options(run68_test_filesearch PRIVATE ${RUN68_SANITIZER_FLAGS})
       target_link_options(run68_test_filesearch PRIVATE ${RUN68_SANITIZER_FLAGS})

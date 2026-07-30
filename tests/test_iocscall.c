@@ -14,6 +14,41 @@ BOOL cpu_instruction_active;
 
 static UChar memory[4096];
 static int failures;
+static UChar opm_address;
+static UChar opm_status;
+static UChar opm_register;
+static UChar opm_value;
+static Long opm_callback_work;
+static int adpcm_start_calls;
+static size_t adpcm_length;
+static UShort adpcm_mode;
+static int adpcm_control_mode = -1;
+static int adpcm_fake_status;
+
+static int fake_adpcm_start(void *context, const UChar *data, size_t length,
+	UShort mode)
+{
+	(void)context;
+	if (data != memory + 100)
+		failures++;
+	adpcm_start_calls++;
+	adpcm_length = length;
+	adpcm_mode = mode;
+	return 0;
+}
+
+static int fake_adpcm_control(void *context, int mode)
+{
+	(void)context;
+	adpcm_control_mode = mode;
+	return 0;
+}
+
+static int fake_adpcm_status(const void *context)
+{
+	(void)context;
+	return adpcm_fake_status;
+}
 
 static void expect_long(const char *name, Long expected, Long actual)
 {
@@ -27,6 +62,12 @@ static void expect_long(const char *name, Long expected, Long actual)
 Long mem_get(Long address, char size)
 {
 	ULong p = (ULong)address & 0x00ffffffu;
+	if (p == 0x00e90003)
+		return opm_status;
+	if (p == OPM_CALLBACK_WORK)
+		return opm_callback_work;
+	if (p >= sizeof(memory))
+		return 0;
 	Long value = memory[p];
 
 	if (size >= S_WORD)
@@ -39,6 +80,21 @@ Long mem_get(Long address, char size)
 void mem_set(Long address, Long value, char size)
 {
 	ULong p = (ULong)address & 0x00ffffffu;
+	if (p == 0x00e90001 && size == S_BYTE) {
+		opm_address = (UChar)value;
+		return;
+	}
+	if (p == 0x00e90003 && size == S_BYTE) {
+		opm_register = opm_address;
+		opm_value = (UChar)value;
+		return;
+	}
+	if (p == OPM_CALLBACK_WORK && size == S_LONG) {
+		opm_callback_work = value;
+		return;
+	}
+	if (p >= sizeof(memory))
+		return;
 
 	if (size == S_BYTE) {
 		memory[p] = (UChar)value;
@@ -120,6 +176,54 @@ int main(void)
 		fprintf(stderr, "ONTIME returned an invalid startup duration\n");
 		failures++;
 	}
+
+	iocs_set_adpcm_backend(NULL, fake_adpcm_start, fake_adpcm_control,
+	                      fake_adpcm_status);
+	memory[100] = 0x12;
+	memory[101] = 0x34;
+	ra[1] = 100;
+	rd[1] = 0x0403;
+	rd[2] = 2;
+	call_iocs(0x60);
+	expect_long("ADPCMOUT result", 0, rd[0]);
+	expect_long("ADPCMOUT calls", 1, adpcm_start_calls);
+	expect_long("ADPCMOUT length", 2, (Long)adpcm_length);
+	expect_long("ADPCMOUT mode", 0x0403, adpcm_mode);
+	adpcm_fake_status = 2;
+	call_iocs(0x66);
+	expect_long("ADPCMSNS", 2, rd[0]);
+	rd[1] = 0;
+	call_iocs(0x67);
+	expect_long("ADPCMMOD stop", 0, rd[0]);
+	expect_long("ADPCMMOD callback", 0, adpcm_control_mode);
+	rd[1] = 3;
+	call_iocs(0x67);
+	expect_long("ADPCMMOD invalid", -1, rd[0]);
+	iocs_set_adpcm_backend(NULL, NULL, NULL, NULL);
+
+	rd[1] = 0x14;
+	rd[2] = 0x2a;
+	call_iocs(0x68);
+	expect_long("OPMSET register", 0x14, opm_register);
+	expect_long("OPMSET value", 0x2a, opm_value);
+	opm_status = 0x83;
+	call_iocs(0x69);
+	expect_long("OPMSNS status", 0x83, rd[0]);
+
+	iocs_audio_reset();
+	ra[1] = 0x123456;
+	call_iocs(0x6a);
+	expect_long("OPMINTST install result", 0, rd[0]);
+	expect_long("OPMINTST handler", 0x123456,
+	            iocs_opm_interrupt_handler());
+	expect_long("OPMINTST callback work", 0x123456, opm_callback_work);
+	ra[1] = 0x234568;
+	call_iocs(0x6a);
+	expect_long("OPMINTST busy result", 0x123456, rd[0]);
+	ra[1] = 0;
+	call_iocs(0x6a);
+	expect_long("OPMINTST disable result", 0, rd[0]);
+	expect_long("OPMINTST disabled", 0, iocs_opm_interrupt_handler());
 
 	ra[1] = 100;
 	rd[1] = 0x11223344;
