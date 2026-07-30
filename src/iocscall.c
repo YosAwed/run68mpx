@@ -59,6 +59,32 @@ static Long	Intvcs( Long, Long );
 static void	Memstr( BOOL );
 static void	Poke( char );
 static void	Dmamove( Long, Long, Long, Long );
+static Long opm_interrupt_handler;
+static void *adpcm_context;
+static IOCS_ADPCM_START_CALLBACK adpcm_start;
+static IOCS_ADPCM_CONTROL_CALLBACK adpcm_control;
+static IOCS_ADPCM_STATUS_CALLBACK adpcm_status;
+
+void iocs_set_adpcm_backend(void *context,
+	IOCS_ADPCM_START_CALLBACK start,
+	IOCS_ADPCM_CONTROL_CALLBACK control,
+	IOCS_ADPCM_STATUS_CALLBACK status)
+{
+	adpcm_context = context;
+	adpcm_start = start;
+	adpcm_control = control;
+	adpcm_status = status;
+}
+
+void iocs_audio_reset(void)
+{
+	opm_interrupt_handler = 0;
+}
+
+Long iocs_opm_interrupt_handler(void)
+{
+	return opm_interrupt_handler;
+}
 
 /*
  　機能：IOCSCALLを実行する
@@ -235,6 +261,62 @@ int iocs_call()
 			break;
 		case 0x5C:	/* DAYASC */
 			Dayasc( rd [ 1 ], ra [ 1 ] );
+			break;
+		case 0x60:	/* ADPCMOUT */
+		{
+			ULong address = (ULong)ra[1] & 0x00ffffffu;
+			ULong length = (ULong)rd[2];
+			UShort mode = (UShort)rd[1];
+
+			if (rd[2] < 0 || address > (ULong)mem_aloc ||
+			    length > (ULong)mem_aloc - address) {
+				rd[0] = -1;
+			} else if (adpcm_start != NULL &&
+			           adpcm_start(adpcm_context,
+			                       (const UChar *)prog_ptr + address,
+			                       (size_t)length, mode) != 0) {
+				rd[0] = -1;
+			} else {
+				rd[0] = 0;
+			}
+			break;
+		}
+		case 0x66:	/* ADPCMSNS */
+			rd[0] = adpcm_status == NULL ? 0 :
+			        adpcm_status(adpcm_context);
+			break;
+		case 0x67:	/* ADPCMMOD */
+			if (rd[1] < 0 || rd[1] > 2)
+				rd[0] = -1;
+			else if (adpcm_control != NULL)
+				rd[0] = adpcm_control(adpcm_context, (int)rd[1]);
+			else
+				rd[0] = 0;
+			break;
+		case 0x68:	/* OPMSET */
+			mem_set(0x00e90001, rd[1], S_BYTE);
+			mem_set(0x00e90003, rd[2], S_BYTE);
+			break;
+		case 0x69:	/* OPMSNS */
+			rd[0] = (rd[0] & (Long)0xffffff00u) |
+			        (mem_get(0x00e90003, S_BYTE) & 0xff);
+			break;
+		case 0x6A:	/* OPMINTST */
+			save_s = SR_S_REF();
+			SR_S_ON();
+			if (ra[1] == 0) {
+				opm_interrupt_handler = 0;
+				mem_set(OPM_CALLBACK_WORK, 0, S_LONG);
+				rd[0] = 0;
+			} else if (opm_interrupt_handler == 0) {
+				opm_interrupt_handler = ra[1];
+				mem_set(OPM_CALLBACK_WORK, ra[1], S_LONG);
+				rd[0] = 0;
+			} else {
+				rd[0] = opm_interrupt_handler;
+			}
+			if (save_s == 0)
+				SR_S_OFF();
 			break;
 		case 0x6C:	/* VDISPST */
 			save_s = SR_S_REF();

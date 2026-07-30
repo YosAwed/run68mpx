@@ -107,6 +107,10 @@ int main(void)
 	expect_u32("initial sr", 0, (UShort)sr);
 
 	cpu_backend_execute_one();
+	if (cpu_backend_last_cycles() == 0) {
+		fprintf(stderr, "Musashi did not report instruction cycles\n");
+		return 1;
+	}
 	expect_u32("moveq d0", 1, (ULong)rd[0]);
 	expect_u32("moveq pc", 0x10002, (ULong)pc);
 	expect_u32("moveq user mode", 0, (UShort)sr & 0x2000u);
@@ -146,6 +150,46 @@ int main(void)
 	expect_u32("address error frame", 0x30ff2, (ULong)ra[7]);
 	expect_u32("address error supervisor", 0x2000,
 	           (UShort)sr & 0x2000u);
+
+	/* A level 6 request must enter the MC68000 autovector and return via RTE. */
+	put_word(0x10000, 0x4e71); /* nop */
+	put_word(0x13000, 0x5283); /* addq.l #1,d3 */
+	put_word(0x13002, 0x4e73); /* rte */
+	mem_set(0x78, 0x13000, S_LONG);
+	pc = 0x10000;
+	rd[3] = 0;
+	ra[7] = 0x30000;
+	usp = 0x30000;
+	ssp = 0x31000;
+	sr = 0;
+	cpu_backend_prepare();
+	cpu_backend_set_irq(6);
+	cpu_backend_execute_one();
+	expect_u32("IRQ6 handler result", 1, (ULong)rd[3]);
+	expect_u32("IRQ6 handler PC", 0x13002, (ULong)pc);
+	cpu_backend_set_irq(0);
+	cpu_backend_execute_one();
+	expect_u32("IRQ6 return PC", 0x10000, (ULong)pc);
+	expect_u32("IRQ6 return mode", 0, (UShort)sr & 0x2000u);
+
+	/* MFP-backed OPM IRQs supply vector 0x43 instead of autovectoring. */
+	put_word(0x14000, 0x5884); /* addq.l #4,d4 */
+	put_word(0x14002, 0x4e73); /* rte */
+	mem_set(0x43 * 4, 0x14000, S_LONG);
+	pc = 0x10000;
+	rd[4] = 0;
+	ra[7] = 0x30000;
+	usp = 0x30000;
+	ssp = 0x31000;
+	sr = 0;
+	cpu_backend_prepare();
+	cpu_backend_set_irq_vector(6, 0x43);
+	cpu_backend_execute_one();
+	expect_u32("vectored IRQ6 handler result", 4, (ULong)rd[4]);
+	expect_u32("vectored IRQ6 handler PC", 0x14002, (ULong)pc);
+	cpu_backend_set_irq(0);
+	cpu_backend_execute_one();
+	expect_u32("vectored IRQ6 return PC", 0x10000, (ULong)pc);
 
 	free(prog_ptr);
 	return 0;

@@ -52,13 +52,15 @@ Human68k の実行ファイル（`.x` / `.r`）を macOS などのターミナ�
 - `ONTIME`を単調時計によるエミュレータ起動後の1/100秒カウンタとして実装
 - `B_MEMSTR`、`B_BPOKE`、`B_WPOKE`、`B_LPOKE`、`B_MEMSET`を実装し、アドレスレジスタと転送カウンタもIOCS仕様に従って更新
 - `DMAMOVE`の固定／増加／減少アドレスと両方向転送に対応し、ゲストメモリ境界検査を経由するよう安全化
+- 実験的なYM2151（OPM）I/O、Timer A/B、IOCS `OPMSET`／`OPMSNS`／`OPMINTST`を実装し、MusashiコアからWAVへ出力
+- MSM6258 4-bit ADPCMデコードとIOCS `ADPCMOUT`／`ADPCMSNS`／`ADPCMMOD`を実装し、OPM出力へミックス
 
-VRAM、音源、物理ディスク、シリアル、マウスなど実機ハードウェアを必要とするIOCSCALLは、このCLI対応の対象外です。
+PCM8、VRAM、物理ディスク、シリアル、マウスなど、上記以外の実機ハードウェアを必要とするIOCSCALLは、このCLI対応の対象外です。
 
 ### ビルドと品質確認
 
 - Apple Silicon／Intel macOSおよびLinuxを対象にしたCI構成へ更新
-- CTestによる18系統の回帰テストを追加し、CPU命令、例外、メモリ、ローダ、DOSファイル検索、CLI向けIOCS、Musashiバックエンドを検証
+- CTestによる21系統の回帰テストを追加し、CPU命令、例外、メモリ、ローダ、DOSファイル検索、CLI向けIOCS、Musashiバックエンド、OPM／ADPCM音声を検証
 - AddressSanitizer／UndefinedBehaviorSanitizerを有効にできる `RUN68_ENABLE_SANITIZERS` オプションを追加
 - コンパイラ警告を強化し、現在のバージョン表示を `0.10.0` に更新
 
@@ -136,6 +138,35 @@ MPUバックエンドは、従来コアが既定です。実験的なMusashiバ�
 ./build/run68 --cpu=musashi program.x [引数...]
 ```
 
+macOSのデフォルト音声デバイスでYM2151／MSM6258をリアルタイム再生する場合:
+
+```sh
+./build/run68 --cpu=musashi --audio=live program.x [引数...]
+```
+
+OPM／ADPCMのミックス出力をWAVへ保存することもできます。
+
+```sh
+./build/run68 --cpu=musashi --audio=wav:output.wav program.x [引数...]
+```
+
+音声は62.5 kHz、16-bitステレオです。リアルタイム出力は現在macOSに対応しています。
+
+`tests/HAS.X`と`tests/hlk.r`がある場合、MXDRV用CLIランチャーをビルドできます。
+
+```sh
+cmake --build build --target mxplay
+./build/run68 --cpu=musashi --audio=live \
+  ./build/MXPLAY.X tests/mxdrv.x tests/BOM_01.MDX
+```
+
+ランチャーはMXDRV.XをDOSCALL `EXEC`で子プロセスとして起動し、`KEEPPR`で
+常駐した後、MDXをMXDRV転送形式へ整形して`TRAP #4`の`LOADMML`と`M_PLAY`を
+呼びます。キーが押されるまで演奏を続け、1キー入力を受けると`M_END`で停止します。
+MDXにPDX名が埋め込まれている場合はMDXと同じディレクトリから検索し、拡張子が
+省略されていれば`.PDX`を補って`LOADPCM`へ転送します。現在は標準の96音色PDXと
+MSM6258の単音再生に対応し、EX-PDX／PCM8多重再生は未対応です。
+
 MusashiモードでもDOSCALL（`0xFFxx`）、FLOAT（`0xFExx`）、IOCSCALL
 （`TRAP #15`）はrun68mpxのホスト実装へ接続されます。現在は互換性比較を
 優先して1命令ごとに既存のレジスタ状態と同期するため、速度は今後の最適化
@@ -148,8 +179,12 @@ MusashiモードでもDOSCALL（`0xFFxx`）、FLOAT（`0xFExx`）、IOCSCALL
 GNU General Public License version 2（GPL-2.0）です。詳細は [LICENCE](LICENCE) を参照してください。
 
 元プロジェクトと各移植・修正の作者、コントリビューターに感謝します。
+YM2151エミュレーションにはAaron Giles氏のBSD 3-Clauseライセンスの
+[ymfm](https://github.com/aaronsgiles/ymfm)を使用しています。
 
 実験的MPUバックエンドには Karl Stenerud による
 [Musashi](https://github.com/kstenerud/Musashi) を使用しています。取り込んだ
 コミットとライセンスについては
 [`third_party/musashi/UPSTREAM.md`](third_party/musashi/UPSTREAM.md) を参照してください。
+ymfmの取り込み元については
+[`third_party/ymfm/UPSTREAM.md`](third_party/ymfm/UPSTREAM.md) を参照してください。

@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "run68.h"
+#include "x68k_bus.h"
 
 FILEINFO finfo[FILE_MAX];
 INI_INFO ini_info;
@@ -27,6 +28,34 @@ EXEC_INSTRUCTION_INFO OP_info;
 BOOL cpu_instruction_active;
 
 static int failures;
+
+typedef struct {
+	int reset_count;
+	int write_count;
+	UChar status;
+	UChar reg;
+	UChar value;
+} TEST_OPM;
+
+static void test_opm_reset(void *context)
+{
+	TEST_OPM *opm = context;
+	opm->reset_count++;
+}
+
+static UChar test_opm_read_status(void *context)
+{
+	TEST_OPM *opm = context;
+	return opm->status;
+}
+
+static void test_opm_write_register(void *context, UChar reg, UChar value)
+{
+	TEST_OPM *opm = context;
+	opm->write_count++;
+	opm->reg = reg;
+	opm->value = value;
+}
 
 void err68(char *message)
 {
@@ -93,6 +122,62 @@ static void test_operand_address_error_exception(void)
 	           (ULong)mem_get(0x2fffe, S_WORD));
 }
 
+static void test_opm_bus_access(void)
+{
+	TEST_OPM opm = {0};
+	X68K_OPM_BACKEND backend = {
+		&opm,
+		test_opm_reset,
+		test_opm_read_status,
+		test_opm_write_register
+	};
+
+	opm.status = 0x83;
+	x68k_bus_set_opm_backend(&backend);
+	expect_u32("OPM backend reset", 1, (ULong)opm.reset_count);
+
+	mem_set(0x00e90001, 0x14, S_BYTE);
+	mem_set(0x00e90003, 0x2a, S_BYTE);
+	expect_u32("OPM register write count", 1, (ULong)opm.write_count);
+	expect_u32("OPM register number", 0x14, (ULong)opm.reg);
+	expect_u32("OPM register value", 0x2a, (ULong)opm.value);
+	expect_u32("OPM status", 0x83,
+	           (ULong)mem_get(0x00e90003, S_BYTE));
+
+	mem_set((Long)0x01e90001u, 0x20, S_BYTE);
+	mem_set((Long)0x01e90003u, 0x7f, S_BYTE);
+	expect_u32("wrapped OPM register number", 0x20, (ULong)opm.reg);
+	expect_u32("wrapped OPM register value", 0x7f, (ULong)opm.value);
+
+	x68k_bus_set_opm_backend(NULL);
+	mem_set(0x00e90001, 0x08, S_BYTE);
+	mem_set(0x00e90003, 0x78, S_BYTE);
+	expect_u32("unconnected OPM status", 0,
+	           (ULong)mem_get(0x00e90003, S_BYTE));
+}
+
+static void test_mfp_latch_access(void)
+{
+	x68k_bus_reset();
+	expect_u32("MFP reset value", 0,
+	           (ULong)mem_get(0x00e88009, S_BYTE));
+	expect_u32("MFP reset vector base", 0x40,
+	           (ULong)mem_get(0x00e88017, S_BYTE));
+	mem_set(0x00e88009, 0xff, S_BYTE);
+	expect_u32("MFP IERB latch", 0xff,
+	           (ULong)mem_get(0x00e88009, S_BYTE));
+	mem_set(0x00e88009, 0xf7, S_BYTE);
+	expect_u32("MFP IERB update", 0xf7,
+	           (ULong)mem_get(0x00e88009, S_BYTE));
+	expect_u32("disabled MFP OPM IRQ", (ULong)-1,
+	           (ULong)x68k_bus_opm_irq_vector());
+	mem_set(0x00e88009, 0x08, S_BYTE);
+	mem_set(0x00e88015, 0x08, S_BYTE);
+	mem_set(0x00e88017, 0x40, S_BYTE);
+	expect_u32("MFP OPM IRQ vector", 0x43,
+	           (ULong)x68k_bus_opm_irq_vector());
+}
+
 int main(void)
 {
 	mem_aloc = 0x40000;
@@ -122,6 +207,13 @@ int main(void)
 	expect_abort("word at odd address", ENV_TOP + 1, S_WORD, 0);
 	expect_abort("long write at odd address", ENV_TOP + 1, S_LONG, 1);
 	test_operand_address_error_exception();
+	test_opm_bus_access();
+	test_mfp_latch_access();
+	expect_u32("absent trap driver probe", 0,
+	           (ULong)mem_get((Long)(TRAP2_WORK - 8), S_LONG));
+	expect_u32("masked absent trap driver probe", 0,
+	           (ULong)mem_get(0x00fefff8, S_LONG));
+	expect_abort("unmapped I/O", 0x00e94001, S_BYTE, 0);
 
 	free(prog_ptr);
 	return failures == 0 ? 0 : 1;

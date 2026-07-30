@@ -176,6 +176,9 @@ static inline char *run68_ltoa(Long value, char *text, int radix)
 #define	HUMAN_HEAD	0x6800		/* Humanのメモリ管理ブロック位置 */
 #define	FCB_WORK	0x20F00		/* DOSCALL GETFCB用ワーク領域 */
 #define	HUMAN_WORK	0x21000		/* 割り込み処理先等のワーク領域 */
+#define OPM_CALLBACK_WORK (HUMAN_WORK + 0x20)
+#define OPM_IRQ_WORK      (HUMAN_WORK + 0x40)
+#define IOCS_AUDIO_WORK   (HUMAN_WORK + 0x60)
 #define	TRAP0_WORK	0x20FF0000	/* TRAP割り込み処理先等のワーク領域 */
 #define	TRAP1_WORK	0x21FF0000	/* TRAP割り込み処理先等のワーク領域 */
 #define	TRAP2_WORK	0x22FF0000	/* TRAP割り込み処理先等のワーク領域 */
@@ -362,11 +365,23 @@ int	dos_call( UChar ) ;
 
 /* iocscall.c */
 int	iocs_call( void ) ;
+void iocs_audio_reset( void );
+Long iocs_opm_interrupt_handler( void );
+typedef int (*IOCS_ADPCM_START_CALLBACK)(void *context, const UChar *data,
+                                         size_t length, UShort mode);
+typedef int (*IOCS_ADPCM_CONTROL_CALLBACK)(void *context, int mode);
+typedef int (*IOCS_ADPCM_STATUS_CALLBACK)(const void *context);
+void iocs_set_adpcm_backend(void *context,
+                            IOCS_ADPCM_START_CALLBACK start,
+                            IOCS_ADPCM_CONTROL_CALLBACK control,
+                            IOCS_ADPCM_STATUS_CALLBACK status);
 
 /* hostconsole.c */
 int	run68_console_getch( BOOL );
 int	run68_console_kbhit( void );
 BOOL	run68_console_ungetch( int );
+BOOL	run68_console_begin_raw_input( void );
+void	run68_console_end_raw_input( void );
 void	run68_console_flush_input( void );
 
 /* key.c */

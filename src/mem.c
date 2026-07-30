@@ -23,11 +23,13 @@
 
 #include <stdio.h>
 #include "run68.h"
+#include "x68k_bus.h"
 
 static	int	mem_red_chk( Long, char );
 static	int	mem_wrt_chk( Long, char );
 static	ULong	mem_normalize_address( Long );
 static	ULong	mem_access_width( char );
+static	BOOL	mem_is_trap_probe( ULong, ULong );
 static	void	mem_address_exception( Long, BOOL );
 void	run68_abort( Long );
 
@@ -90,8 +92,25 @@ Long imi_get( char size )
 Long mem_get( Long adr, char size )
 {
 	UChar   *mem;
-	Long	d;
+	ULong	d;
+	ULong original = (ULong)adr;
+	ULong width = mem_access_width(size);
 	ULong normalized = mem_normalize_address(adr);
+	uint32_t io_value;
+
+	/*
+	 * The legacy run68 trap vectors use 0x20ff0000..0x28ff0000 as
+	 * sentinels for absent handlers. Some resident drivers inspect a few
+	 * bytes immediately before a vector target to identify another driver.
+	 * Musashi applies the 68000's 24-bit address mask before calling us, so
+	 * also recognize the normalized 0x00fefff0..0x00feffff range. Preserve
+	 * the sentinel semantics while reporting "no signature".
+	 */
+	if (mem_is_trap_probe(original, width))
+		return 0;
+
+	if (x68k_bus_read(normalized, size, &io_value))
+		return (Long)io_value;
 
 	if ( normalized < ENV_TOP ||
 	     normalized + mem_access_width(size) > (ULong)mem_aloc ) {
@@ -122,6 +141,16 @@ Long mem_get( Long adr, char size )
 	}
 }
 
+static BOOL mem_is_trap_probe(ULong address, ULong width)
+{
+	ULong tag = address >> 24;
+	ULong low = address & 0x00ffffffu;
+
+	return (tag == 0 || (tag >= 0x20u && tag <= 0x28u)) &&
+	       low >= 0x00fefff0u && low < 0x00ff0000u &&
+	       width <= 0x00ff0000u - low;
+}
+
 /*
  　機能：メモリに指定されたサイズのデータをセットする
  戻り値：なし
@@ -130,6 +159,9 @@ void mem_set( Long adr, Long d, char size )
 {
 	UChar   *mem;
 	ULong normalized = mem_normalize_address(adr);
+
+	if (x68k_bus_write(normalized, size, (ULong)d))
+		return;
 
 	if ( normalized < ENV_TOP ||
 	     normalized + mem_access_width(size) > (ULong)mem_aloc ) {
