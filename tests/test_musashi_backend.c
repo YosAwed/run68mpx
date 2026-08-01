@@ -16,6 +16,7 @@ BOOL cpu_instruction_active;
 
 static int fline_calls;
 static int iocs_calls;
+static int pcm8_calls;
 static BOOL fline_should_finish;
 
 int prog_exec(void)
@@ -35,6 +36,13 @@ int iocs_call(void)
 {
 	++iocs_calls;
 	rd[1] = 0x12345678;
+	return FALSE;
+}
+
+int pcm8_call(void)
+{
+	++pcm8_calls;
+	rd[2] = 0x2468ace0;
 	return FALSE;
 }
 
@@ -99,7 +107,8 @@ int main(void)
 	put_word(0x10002, 0x5280); /* addq.l #1,d0 */
 	put_word(0x10004, 0xff2a); /* run68 DOSCALL HLE */
 	put_word(0x10006, 0x4e4f); /* trap #15 / IOCS HLE */
-	put_word(0x10008, 0x4e71); /* nop */
+	put_word(0x10008, 0x4e42); /* trap #2 / PCM8 HLE */
+	put_word(0x1000a, 0x4e71); /* nop */
 
 	if (!cpu_backend_select("musashi"))
 		return 1;
@@ -125,13 +134,17 @@ int main(void)
 	expect_u32("iocs calls", 1, (ULong)iocs_calls);
 	expect_u32("iocs result", 0x12345678, (ULong)rd[1]);
 	expect_u32("iocs pc", 0x10008, (ULong)pc);
-	put_word(0x10008, 0xff4c);
+	cpu_backend_execute_one();
+	expect_u32("pcm8 calls", 1, (ULong)pcm8_calls);
+	expect_u32("pcm8 result", 0x2468ace0, (ULong)rd[2]);
+	expect_u32("pcm8 pc", 0x1000a, (ULong)pc);
+	put_word(0x1000a, 0xff4c);
 	fline_should_finish = TRUE;
 	if (cpu_backend_execute_one() != TRUE) {
 		fprintf(stderr, "terminating DOSCALL did not stop execution\n");
 		return 1;
 	}
-	expect_u32("terminating fline pc", 0x1000a, (ULong)pc);
+	expect_u32("terminating fline pc", 0x1000c, (ULong)pc);
 	fline_should_finish = FALSE;
 
 	/* An odd word operand must use Musashi's MC68000 address-error frame. */

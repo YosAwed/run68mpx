@@ -139,6 +139,24 @@ static int run68_adpcm_status(const void *context)
 	return x68k_audio_adpcm_status((const X68K_AUDIO *)context);
 }
 
+static int run68_pcm8_start(void *context, unsigned int channel,
+	const UChar *data, size_t length, ULong mode)
+{
+	return x68k_audio_pcm8_start((X68K_AUDIO *)context, channel, data,
+	                              length, mode);
+}
+
+static int run68_pcm8_control(void *context, int mode)
+{
+	return x68k_audio_pcm8_control((X68K_AUDIO *)context, mode);
+}
+
+static size_t run68_pcm8_remaining(const void *context,
+	unsigned int channel)
+{
+	return x68k_audio_pcm8_remaining((const X68K_AUDIO *)context, channel);
+}
+
 int main( int argc, char *argv[], char *envp[] )
 {
 	char	fname [ 89 ];		/* 実行ファイル名 */
@@ -168,6 +186,7 @@ Restart:
 	audio_wav_path = NULL;
 	audio_live = FALSE;
 	raw_input_active = FALSE;
+	pcm8_set_backend(NULL, NULL, NULL, NULL);
 	x68k_bus_reset();
     /* コマンドライン解析 */
     for (i = 1; i < argc; i ++)
@@ -456,6 +475,20 @@ Restart:
 	}
 	iocs_set_adpcm_backend(audio_device, run68_adpcm_start,
 	                      run68_adpcm_control, run68_adpcm_status);
+	pcm8_set_backend(audio_device, run68_pcm8_start, run68_pcm8_control,
+	                 run68_pcm8_remaining);
+	if (audio_device != NULL) {
+		short saved_supervisor = SR_S_REF();
+
+		SR_S_ON();
+		/* MXDRV recognizes a resident PCM8 driver by this signature. */
+		mem_set(PCM8_TRAP_WORK - 8, 0x50434d38, S_LONG); /* "PCM8" */
+		mem_set(PCM8_TRAP_WORK - 4, 0, S_LONG);
+		mem_set(PCM8_TRAP_WORK, 0x4e73, S_WORD); /* rte fallback */
+		mem_set(0x88, PCM8_TRAP_WORK, S_LONG);    /* TRAP #2 vector */
+		if (saved_supervisor == 0)
+			SR_S_OFF();
+	}
 	if (audio_live) {
 		if (!run68_console_begin_raw_input()) {
 			fprintf(stderr, "端末を1キー入力モードに変更できません。\n");
@@ -482,9 +515,14 @@ Restart:
 	if (raw_input_active)
 		run68_console_end_raw_input();
 	iocs_set_adpcm_backend(NULL, NULL, NULL, NULL);
+	pcm8_set_backend(NULL, NULL, NULL, NULL);
 	if (func_trace_f) {
 		fprintf(stderr, "OPM register writes: %llu\n",
 		        (unsigned long long)x68k_bus_opm_write_count());
+		fprintf(stderr, "PCM8 calls: %llu, starts: %llu, channels: $%02x\n",
+		        (unsigned long long)pcm8_call_count(),
+		        (unsigned long long)pcm8_start_count(),
+		        pcm8_used_channel_mask() & 0xffu);
 	}
 	if (x68k_audio_destroy(audio_device) != 0) {
 		fprintf(stderr, "音声出力の完了に失敗しました。\n");

@@ -15,6 +15,13 @@ int x68k_audio_adpcm_start(X68K_AUDIO *audio, const uint8_t *data,
                            size_t length, uint16_t mode);
 int x68k_audio_adpcm_control(X68K_AUDIO *audio, int mode);
 int x68k_audio_adpcm_status(const X68K_AUDIO *audio);
+int x68k_audio_pcm8_start(X68K_AUDIO *audio, unsigned int channel,
+                          const uint8_t *data, size_t length,
+                          uint32_t mode);
+int x68k_audio_pcm8_stop(X68K_AUDIO *audio, unsigned int channel);
+int x68k_audio_pcm8_control(X68K_AUDIO *audio, int mode);
+size_t x68k_audio_pcm8_remaining(const X68K_AUDIO *audio,
+                                 unsigned int channel);
 
 /* Finalize output and release the device. Returns zero on success. */
 int x68k_audio_destroy(X68K_AUDIO *audio);

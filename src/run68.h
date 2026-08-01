@@ -179,6 +179,7 @@ static inline char *run68_ltoa(Long value, char *text, int radix)
 #define OPM_CALLBACK_WORK (HUMAN_WORK + 0x20)
 #define OPM_IRQ_WORK      (HUMAN_WORK + 0x40)
 #define IOCS_AUDIO_WORK   (HUMAN_WORK + 0x60)
+#define PCM8_TRAP_WORK    (HUMAN_WORK + 0x80)
 #define	TRAP0_WORK	0x20FF0000	/* TRAP割り込み処理先等のワーク領域 */
 #define	TRAP1_WORK	0x21FF0000	/* TRAP割り込み処理先等のワーク領域 */
 #define	TRAP2_WORK	0x22FF0000	/* TRAP割り込み処理先等のワーク領域 */
@@ -375,6 +376,21 @@ void iocs_set_adpcm_backend(void *context,
                             IOCS_ADPCM_START_CALLBACK start,
                             IOCS_ADPCM_CONTROL_CALLBACK control,
                             IOCS_ADPCM_STATUS_CALLBACK status);
+
+/* pcm8.c: built-in PCM8-compatible TRAP #2 service. */
+typedef int (*PCM8_START_CALLBACK)(void *context, unsigned int channel,
+                                   const UChar *data, size_t length,
+                                   ULong mode);
+typedef int (*PCM8_CONTROL_CALLBACK)(void *context, int mode);
+typedef size_t (*PCM8_REMAINING_CALLBACK)(const void *context,
+                                          unsigned int channel);
+void pcm8_set_backend(void *context, PCM8_START_CALLBACK start,
+                      PCM8_CONTROL_CALLBACK control,
+                      PCM8_REMAINING_CALLBACK remaining);
+int pcm8_call(void);
+uint64_t pcm8_start_count(void);
+uint64_t pcm8_call_count(void);
+unsigned int pcm8_used_channel_mask(void);
 
 /* hostconsole.c */
 int	run68_console_getch( BOOL );

@@ -46,7 +46,13 @@ int main(void)
 {
 	static const uint8_t rising_sample[] = {0x77, 0x77, 0x77, 0x77};
 	X68K_MSM6258 *device = x68k_msm6258_create();
+	X68K_PCM8 *pcm8;
+	uint8_t long_sample[64];
 	int16_t samples[128 * 2];
+	size_t remaining;
+	int quiet_peak;
+	int loud_peak;
+	unsigned int channel;
 
 	if (device == NULL)
 		return 1;
@@ -88,5 +94,66 @@ int main(void)
 	expect_true("stopped status", x68k_msm6258_status(device) == 0);
 
 	x68k_msm6258_destroy(device);
+
+	memset(long_sample, 0x77, sizeof(long_sample));
+	pcm8 = x68k_pcm8_create();
+	if (pcm8 == NULL)
+		return 1;
+	expect_true("reject PCM8 raw PCM mode",
+	            x68k_pcm8_start(pcm8, 0, long_sample,
+	                             sizeof(long_sample), 0x00080503) != 0);
+	expect_true("start PCM8 left",
+	            x68k_pcm8_start(pcm8, 0, long_sample,
+	                             sizeof(long_sample), 0x00080401) == 0);
+	expect_true("start PCM8 right",
+	            x68k_pcm8_start(pcm8, 1, long_sample,
+	                             sizeof(long_sample), 0x00080402) == 0);
+	memset(samples, 0, sizeof(samples));
+	x68k_pcm8_mix(pcm8, samples, 32);
+	expect_true("PCM8 left channel", channel_nonzero(samples, 32, 0));
+	expect_true("PCM8 right channel", channel_nonzero(samples, 32, 1));
+	expect_true("PCM8 independent equal voices", samples[0] == samples[1]);
+	remaining = x68k_pcm8_remaining(pcm8, 0);
+	expect_true("PCM8 remaining decreases",
+	            remaining != 0 && remaining < sizeof(long_sample));
+	expect_true("PCM8 pause", x68k_pcm8_control(pcm8, 1) == 0);
+	memset(samples, 0, sizeof(samples));
+	x68k_pcm8_mix(pcm8, samples, 32);
+	expect_true("PCM8 pause silence", !channel_nonzero(samples, 32, 0));
+	expect_true("PCM8 pause preserves position",
+	            x68k_pcm8_remaining(pcm8, 0) == remaining);
+	expect_true("PCM8 resume", x68k_pcm8_control(pcm8, 2) == 0);
+	memset(samples, 0, sizeof(samples));
+	x68k_pcm8_mix(pcm8, samples, 32);
+	expect_true("PCM8 resume output", channel_nonzero(samples, 32, 0));
+	expect_true("PCM8 resume advances",
+	            x68k_pcm8_remaining(pcm8, 0) < remaining);
+
+	expect_true("PCM8 quiet voice",
+	            x68k_pcm8_start(pcm8, 0, long_sample,
+	                             sizeof(long_sample), 0x00000401) == 0);
+	memset(samples, 0, sizeof(samples));
+	x68k_pcm8_mix(pcm8, samples, 64);
+	quiet_peak = channel_peak(samples, 64, 0);
+	expect_true("PCM8 loud voice",
+	            x68k_pcm8_start(pcm8, 0, long_sample,
+	                             sizeof(long_sample), 0x000f0401) == 0);
+	memset(samples, 0, sizeof(samples));
+	x68k_pcm8_mix(pcm8, samples, 64);
+	loud_peak = channel_peak(samples, 64, 0);
+	expect_true("PCM8 volume scaling", loud_peak > quiet_peak);
+
+	for (channel = 0; channel < 8; ++channel)
+		expect_true("PCM8 saturation voice",
+		            x68k_pcm8_start(pcm8, channel, long_sample,
+		                             sizeof(long_sample), 0x000f0403) == 0);
+	memset(samples, 0, sizeof(samples));
+	x68k_pcm8_mix(pcm8, samples, 128);
+	expect_true("PCM8 saturates left", channel_peak(samples, 128, 0) == 32767);
+	expect_true("PCM8 saturates right", channel_peak(samples, 128, 1) == 32767);
+	expect_true("PCM8 abort", x68k_pcm8_control(pcm8, 0) == 0);
+	expect_true("PCM8 abort clears remaining",
+	            x68k_pcm8_remaining(pcm8, 0) == 0);
+	x68k_pcm8_destroy(pcm8);
 	return failures != 0;
 }

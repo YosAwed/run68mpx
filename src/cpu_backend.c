@@ -83,11 +83,11 @@ static int musashi_trap_callback(int trap_number)
 {
 	int finished;
 
-	if (trap_number != 15)
+	if (trap_number != 2 && trap_number != 15)
 		return 0;
 
 	musashi_sync_from_core();
-	finished = iocs_call();
+	finished = trap_number == 2 ? pcm8_call() : iocs_call();
 	if (finished) {
 		musashi_finished = TRUE;
 		m68k_end_timeslice();

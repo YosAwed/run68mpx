@@ -54,13 +54,14 @@ Human68k の実行ファイル（`.x` / `.r`）を macOS などのターミナ�
 - `DMAMOVE`の固定／増加／減少アドレスと両方向転送に対応し、ゲストメモリ境界検査を経由するよう安全化
 - 実験的なYM2151（OPM）I/O、Timer A/B、IOCS `OPMSET`／`OPMSNS`／`OPMINTST`を実装し、MusashiコアからWAVへ出力
 - MSM6258 4-bit ADPCMデコードとIOCS `ADPCMOUT`／`ADPCMSNS`／`ADPCMMOD`を実装し、OPM出力へミックス
+- PCM8互換の`TRAP #2` HLEと8チャンネルADPCMミキサーを実装し、EX-PDXの音量・周波数・パン・一時停止／再開に対応
 
-PCM8、VRAM、物理ディスク、シリアル、マウスなど、上記以外の実機ハードウェアを必要とするIOCSCALLは、このCLI対応の対象外です。
+VRAM、物理ディスク、シリアル、マウスなど、上記以外の実機ハードウェアを必要とするIOCSCALLは、このCLI対応の対象外です。
 
 ### ビルドと品質確認
 
 - Apple Silicon／Intel macOSおよびLinuxを対象にしたCI構成へ更新
-- CTestによる21系統の回帰テストを追加し、CPU命令、例外、メモリ、ローダ、DOSファイル検索、CLI向けIOCS、Musashiバックエンド、OPM／ADPCM音声を検証
+- CTestによる22系統の回帰テストを追加し、CPU命令、例外、メモリ、ローダ、DOSファイル検索、CLI向けIOCS、Musashiバックエンド、OPM／ADPCM／PCM8音声を検証
 - AddressSanitizer／UndefinedBehaviorSanitizerを有効にできる `RUN68_ENABLE_SANITIZERS` オプションを追加
 - コンパイラ警告を強化し、現在のバージョン表示を `0.10.0` に更新
 
@@ -138,13 +139,13 @@ MPUバックエンドは、従来コアが既定です。実験的なMusashiバ�
 ./build/run68 --cpu=musashi program.x [引数...]
 ```
 
-macOSのデフォルト音声デバイスでYM2151／MSM6258をリアルタイム再生する場合:
+macOSのデフォルト音声デバイスでYM2151／MSM6258／PCM8をリアルタイム再生する場合:
 
 ```sh
 ./build/run68 --cpu=musashi --audio=live program.x [引数...]
 ```
 
-OPM／ADPCMのミックス出力をWAVへ保存することもできます。
+OPM／ADPCM／PCM8のミックス出力をWAVへ保存することもできます。
 
 ```sh
 ./build/run68 --cpu=musashi --audio=wav:output.wav program.x [引数...]
@@ -164,8 +165,14 @@ cmake --build build --target mxplay
 常駐した後、MDXをMXDRV転送形式へ整形して`TRAP #4`の`LOADMML`と`M_PLAY`を
 呼びます。キーが押されるまで演奏を続け、1キー入力を受けると`M_END`で停止します。
 MDXにPDX名が埋め込まれている場合はMDXと同じディレクトリから検索し、拡張子が
-省略されていれば`.PDX`を補って`LOADPCM`へ転送します。現在は標準の96音色PDXと
-MSM6258の単音再生に対応し、EX-PDX／PCM8多重再生は未対応です。
+省略されていれば`.PDX`を補って`LOADPCM`へ転送します。標準の96音色PDXによる
+MSM6258単音再生に加え、EX-PDXによるPCM8の最大8音多重再生に対応します。
+
+`--audio=live`または`--audio=wav:...`を指定すると、run68mpxは`TRAP #2`ベクタに
+`PCM8`常駐シグネチャを公開し、MusashiのTRAP HLEからホスト側ミキサーへ接続します。
+そのため、MXDRVでPCM8曲を再生する際に別途`PCM8.X`を常駐させる必要はありません。
+現在の内蔵PCM8はMXDRVのPDXで使われる4-bit ADPCMレートに対応し、PCM8派生ドライバの
+8-bit／16-bitリニアPCMモードは対象外です。
 
 MusashiモードでもDOSCALL（`0xFFxx`）、FLOAT（`0xFExx`）、IOCSCALL
 （`TRAP #15`）はrun68mpxのホスト実装へ接続されます。現在は互換性比較を

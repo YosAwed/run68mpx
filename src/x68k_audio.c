@@ -25,6 +25,7 @@ struct X68K_AUDIO {
 	FILE *wav;
 	X68K_YM2151 *opm;
 	X68K_MSM6258 *adpcm;
+	X68K_PCM8 *pcm8;
 	uint64_t clock_remainder;
 	uint64_t frames_written;
 	int mode;
@@ -110,7 +111,9 @@ X68K_AUDIO *x68k_audio_create_wav(const char *path)
 		return NULL;
 	audio->opm = x68k_ym2151_create(X68000_OPM_CLOCK);
 	audio->adpcm = x68k_msm6258_create();
-	if (audio->opm == NULL || audio->adpcm == NULL) {
+	audio->pcm8 = x68k_pcm8_create();
+	if (audio->opm == NULL || audio->adpcm == NULL || audio->pcm8 == NULL) {
+		x68k_pcm8_destroy(audio->pcm8);
 		x68k_msm6258_destroy(audio->adpcm);
 		x68k_ym2151_destroy(audio->opm);
 		free(audio);
@@ -122,6 +125,7 @@ X68K_AUDIO *x68k_audio_create_wav(const char *path)
 	        != 0) {
 		if (audio->wav != NULL)
 			fclose(audio->wav);
+		x68k_pcm8_destroy(audio->pcm8);
 		x68k_msm6258_destroy(audio->adpcm);
 		x68k_ym2151_destroy(audio->opm);
 		free(audio);
@@ -145,7 +149,9 @@ X68K_AUDIO *x68k_audio_create_live(void)
 	audio->mode = AUDIO_MODE_LIVE;
 	audio->opm = x68k_ym2151_create(X68000_OPM_CLOCK);
 	audio->adpcm = x68k_msm6258_create();
-	if (audio->opm == NULL || audio->adpcm == NULL) {
+	audio->pcm8 = x68k_pcm8_create();
+	if (audio->opm == NULL || audio->adpcm == NULL || audio->pcm8 == NULL) {
+		x68k_pcm8_destroy(audio->pcm8);
 		x68k_msm6258_destroy(audio->adpcm);
 		x68k_ym2151_destroy(audio->opm);
 		free(audio);
@@ -154,6 +160,7 @@ X68K_AUDIO *x68k_audio_create_live(void)
 	audio->live = x68k_live_audio_create(
 		x68k_ym2151_sample_rate(audio->opm));
 	if (audio->live == NULL) {
+		x68k_pcm8_destroy(audio->pcm8);
 		x68k_msm6258_destroy(audio->adpcm);
 		x68k_ym2151_destroy(audio->opm);
 		free(audio);
@@ -189,6 +196,7 @@ void x68k_audio_advance_cpu_cycles(X68K_AUDIO *audio, uint32_t cpu_cycles)
 			return;
 		}
 		x68k_msm6258_mix(audio->adpcm, samples, frames);
+		x68k_pcm8_mix(audio->pcm8, samples, frames);
 		if (!audio->failed && write_frames(audio, samples, frames) != 0)
 			audio->failed = 1;
 		opm_clocks -= step;
@@ -219,6 +227,30 @@ int x68k_audio_adpcm_status(const X68K_AUDIO *audio)
 	return audio == NULL ? 0 : x68k_msm6258_status(audio->adpcm);
 }
 
+int x68k_audio_pcm8_start(X68K_AUDIO *audio, unsigned int channel,
+	const uint8_t *data, size_t length, uint32_t mode)
+{
+	return audio == NULL ? 0 :
+	       x68k_pcm8_start(audio->pcm8, channel, data, length, mode);
+}
+
+int x68k_audio_pcm8_stop(X68K_AUDIO *audio, unsigned int channel)
+{
+	return audio == NULL ? 0 : x68k_pcm8_stop(audio->pcm8, channel);
+}
+
+int x68k_audio_pcm8_control(X68K_AUDIO *audio, int mode)
+{
+	return audio == NULL ? (mode >= 0 && mode <= 2 ? 0 : -1) :
+	       x68k_pcm8_control(audio->pcm8, mode);
+}
+
+size_t x68k_audio_pcm8_remaining(const X68K_AUDIO *audio,
+	unsigned int channel)
+{
+	return audio == NULL ? 0 : x68k_pcm8_remaining(audio->pcm8, channel);
+}
+
 int x68k_audio_destroy(X68K_AUDIO *audio)
 {
 	int result;
@@ -234,6 +266,7 @@ int x68k_audio_destroy(X68K_AUDIO *audio)
 		if (x68k_live_audio_destroy(audio->live, NULL) != 0)
 			result = -1;
 #endif
+		x68k_pcm8_destroy(audio->pcm8);
 		x68k_msm6258_destroy(audio->adpcm);
 		x68k_ym2151_destroy(audio->opm);
 		free(audio);
@@ -249,6 +282,7 @@ int x68k_audio_destroy(X68K_AUDIO *audio)
 		result = -1;
 	if (fclose(audio->wav) != 0)
 		result = -1;
+	x68k_pcm8_destroy(audio->pcm8);
 	x68k_msm6258_destroy(audio->adpcm);
 	x68k_ym2151_destroy(audio->opm);
 	free(audio);
