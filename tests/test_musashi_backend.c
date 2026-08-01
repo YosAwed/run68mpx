@@ -99,6 +99,7 @@ int main(void)
 		return 1;
 
 	pc = 0x10000;
+	ra[0] = 0x22222;
 	ra[7] = 0x30000;
 	usp = ra[7];
 	ssp = ra[7];
@@ -108,7 +109,8 @@ int main(void)
 	put_word(0x10004, 0xff2a); /* run68 DOSCALL HLE */
 	put_word(0x10006, 0x4e4f); /* trap #15 / IOCS HLE */
 	put_word(0x10008, 0x4e42); /* trap #2 / PCM8 HLE */
-	put_word(0x1000a, 0x4e71); /* nop */
+	put_word(0x1000a, 0x4808); /* link.l a0,#-16 compatibility HLE */
+	mem_set(0x1000c, (Long)UINT32_C(0xfffffff0), S_LONG);
 
 	if (!cpu_backend_select("musashi"))
 		return 1;
@@ -138,13 +140,19 @@ int main(void)
 	expect_u32("pcm8 calls", 1, (ULong)pcm8_calls);
 	expect_u32("pcm8 result", 0x2468ace0, (ULong)rd[2]);
 	expect_u32("pcm8 pc", 0x1000a, (ULong)pc);
-	put_word(0x1000a, 0xff4c);
+	cpu_backend_execute_one();
+	expect_u32("link.l frame", 0x22222,
+	           (ULong)mem_get(0x2fffc, S_LONG));
+	expect_u32("link.l a0", 0x2fffc, (ULong)ra[0]);
+	expect_u32("link.l sp", 0x2ffec, (ULong)ra[7]);
+	expect_u32("link.l pc", 0x10010, (ULong)pc);
+	put_word(0x10010, 0xff4c);
 	fline_should_finish = TRUE;
 	if (cpu_backend_execute_one() != TRUE) {
 		fprintf(stderr, "terminating DOSCALL did not stop execution\n");
 		return 1;
 	}
-	expect_u32("terminating fline pc", 0x1000c, (ULong)pc);
+	expect_u32("terminating fline pc", 0x10012, (ULong)pc);
 	fline_should_finish = FALSE;
 
 	/* An odd word operand must use Musashi's MC68000 address-error frame. */

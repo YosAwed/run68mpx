@@ -411,6 +411,7 @@ static void test_link_unlk(void)
 {
 	char link_a2[2] = {(char)0x4e, (char)0x52};
 	char unlk_a2[2] = {(char)0x4e, (char)0x5a};
+	char link_l_a0[2] = {(char)0x48, (char)0x08};
 
 	begin_control_test();
 	control_immediate = (Long)UINT32_C(0xfff0); /* -16 */
@@ -436,6 +437,25 @@ static void test_link_unlk(void)
 	    ra[2] != 0x2222 || ra[7] != 0x0f04) {
 		fprintf(stderr, "UNLK A2 failed: A7=%08x A2=%08x err=%d\n",
 		        (ULong)ra[7], (ULong)ra[2], unexpected_error);
+		failures++;
+	}
+
+	pc = 0;
+	unexpected_error = 0;
+	movem_write_count = 0;
+	control_immediate = (Long)UINT32_C(0xffff0000); /* -65536 */
+	ra[7] = 0x20000;
+	ra[0] = 0x12345678;
+	if (line4(link_l_a0) != FALSE || unexpected_error || pc != 6 ||
+	    ra[0] != 0x1fffc || ra[7] != 0x0fffc || movem_write_count != 1 ||
+	    movem_write_address[0] != 0x1fffc ||
+	    movem_write_data[0] != 0x12345678 ||
+	    movem_write_size[0] != S_LONG) {
+		fprintf(stderr,
+		        "LINK.L A0,#-0x10000 failed: A7=%08x A0=%08x pc=%d "
+		        "writes=%u err=%d\n",
+		        (ULong)ra[7], (ULong)ra[0], pc, movem_write_count,
+		        unexpected_error);
 		failures++;
 	}
 	end_control_test();

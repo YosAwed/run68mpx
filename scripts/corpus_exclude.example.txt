@@ -1,0 +1,6 @@
+# Relative paths (from --samples root) or bare filenames to skip during
+# compare_cpu_backends.py triage. Use for interactive / hardware-wait programs.
+#
+# Examples:
+# games/FOOBAR.X
+# WAITKEY.X

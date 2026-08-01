@@ -191,11 +191,13 @@ static inline char *run68_ltoa(Long value, char *text, int radix)
 #define	TRAP8_WORK	0x28FF0000	/* TRAP割り込み処理先等のワーク領域 */
 #define	ENV_TOP		0x21C00
 #define	ENV_SIZE	0x2000
-#define	STACK_TOP	ENV_TOP + ENV_SIZE
-#define	STACK_SIZE	0x10000		/* 64KB */
+#define	STACK_TOP	(ENV_TOP + ENV_SIZE)
+#define	RUN68_DEFAULT_STACK_SIZE	0x10000	/* 64KB */
+#define	RUN68_MIN_STACK_KB	1
+#define	RUN68_MAX_STACK_KB	4096
 #define	MB_SIZE		16
-#define	PSP_SIZE	MB_SIZE + 240
-#define	PROG_TOP	(STACK_TOP + STACK_SIZE + PSP_SIZE)
+#define	PSP_SIZE	(MB_SIZE + 240)
+#define	PROG_TOP	(STACK_TOP + stack_size + PSP_SIZE)
 #define	NEST_MAX	20
 #define	FILE_MAX	20
 
@@ -471,6 +473,7 @@ void check(char *mode, Long src, Long dest, Long result, int size, short before)
 	Long	nest_sp [ NEST_MAX ] ;	/* 親プロセスのスタックポインタを保存 */
 	char	nest_cnt ;	/* 子プロセスを起動するたびに＋１ */
 	Long	mem_aloc ;	/* メインメモリの大きさ */
+	Long	stack_size = RUN68_DEFAULT_STACK_SIZE ;	/* 実行時スタックサイズ(バイト) */
 #else
 	extern	FILEINFO finfo [ FILE_MAX ] ;
 	extern	INI_INFO ini_info ;
@@ -489,7 +492,13 @@ void check(char *mode, Long src, Long dest, Long result, int size, short before)
 	extern	Long	nest_sp [ NEST_MAX ] ;
 	extern	char	nest_cnt ;
 	extern	Long	mem_aloc ;
+	extern	Long	stack_size ;
 #endif
+
+BOOL	run68_set_stack_size_kb( Long kb );
+BOOL	run68_stack_fits_memory( Long memory_bytes );
+Long	Getenv_common( const char *name_p, char *buf_p );
+Long	Setenv_common( const char *name_p, const char *value_p );
 
 /* exceptions.c */
 void cpu_set_sr(UShort new_sr);

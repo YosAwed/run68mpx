@@ -124,6 +124,25 @@ static unsigned int musashi_read_16(unsigned int address, BOOL immediate)
 		musashi_sync_to_core();
 		return 0x4e71u; /* Execute a harmless NOP in place of the HLE opcode. */
 	}
+	if ((opcode & 0xfff8u) == 0x4808u) {
+		unsigned int reg = opcode & 7u;
+		Long displacement = (Long)raw_read_long(normalized + 2u);
+		Long frame;
+
+		/* Keep the legacy core's LINK.L extension available under Musashi. */
+		musashi_sync_from_core();
+		frame = run68_sub32(ra[7], 4);
+		mem_set(frame, ra[reg], S_LONG);
+		ra[reg] = frame;
+		ra[7] = run68_add32(frame, displacement);
+		if (((UShort)sr & 0x2000u) != 0)
+			ssp = ra[7];
+		else
+			usp = ra[7];
+		pc = (Long)(normalized + 6u);
+		musashi_sync_to_core();
+		return 0x4e71u;
+	}
 
 	return opcode;
 }

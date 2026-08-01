@@ -96,6 +96,7 @@
 #endif
 
 static Long Gets( Long );
+static Long Getss( Long );
 static Long Kflush( short );
 static Long Ioctrl( short, Long );
 static Long Dup( short );
@@ -125,8 +126,17 @@ static Long Filedate( short, Long );
 static Long Getdate( void );
 static Long Setdate( short );
 static Long Gettime( int );
+static Long Settime( short );
 static Long Settim2( Long );
 static Long Getenv( Long, Long, Long );
+static Long Setenv( Long, Long, Long );
+static Long Wait( void );
+static Long Setpdb( Long );
+static Long Fatchk( Long, Long, UShort );
+static Long Maketmp( Long, short );
+static Long S_malloc( short, Long, Long );
+static Long S_mfree( Long );
+static Long S_process( short, Long, Long, Long );
 static Long Namests( Long, Long );
 static Long Nameck( Long, Long );
 static Long Conctrl( short, Long );
@@ -144,8 +154,9 @@ static void Exec4( Long );
 static void get_jtime( UShort *, UShort *, int );
 #endif
 static Long gets2( char *, int );
+static const char *guest_string( Long );
+static BOOL host_path( const char *, char *, size_t );
 
-Long Getenv_common(const char *name_p, char *buf_p);
 
 #if defined(__APPLE__) || defined(__linux__)
 void CloseHandle( FILE* fp ) {
@@ -502,7 +513,22 @@ int dos_call( UChar code )
 		}
 		rd [ 0 ] = Gets( buf );
 		break;
-		//#elif defined(DOSX)
+	  case 0x17:    /* FATCHK */
+		data = mem_get( stack_adr, S_LONG );
+		buf  = mem_get( stack_adr + 4, S_LONG );
+		srt  = (short)mem_get( stack_adr + 8, S_WORD );
+		if (func_trace_f) {
+			printf("%-10s file=$%08X\n", "FATCHK", data);
+		}
+		rd [ 0 ] = Fatchk( data, buf, (UShort)srt );
+		break;
+	  case 0x1A:    /* GETSS */
+		buf = mem_get( stack_adr, S_LONG );
+		if (func_trace_f) {
+			printf("%-10s\n", "GETSS");
+		}
+		rd [ 0 ] = Getss( buf );
+		break;
 	  case 0x0B:    /* KEYSNS */
 		if (func_trace_f) {
 			printf("%-10s\n", "KEYSNS");
@@ -857,6 +883,13 @@ int dos_call( UChar code )
 		}
 		rd [ 0 ] = Gettime( 0 );
 		break;
+	  case 0x2D:    /* SETTIME */
+		srt = (short)mem_get( stack_adr, S_WORD );
+		if (func_trace_f) {
+			printf("%-10s time=%X\n", "SETTIME", (UShort)srt);
+		}
+		rd [ 0 ] = Settime( srt );
+		break;
 	  case 0x30:    /* VERNUM */
 		if (func_trace_f) {
 			printf("%-10s\n", "VERNUM");
@@ -1102,6 +1135,12 @@ int dos_call( UChar code )
 			return( TRUE );
 		}
 		break;
+	  case 0x4D:    /* WAIT */
+		if (func_trace_f) {
+			printf("%-10s\n", "WAIT");
+		}
+		rd [ 0 ] = Wait();
+		break;
 	  case 0x4E:    /* FILES */
 		buf  = mem_get( stack_adr, S_LONG );
 		data = mem_get( stack_adr + 4, S_LONG );
@@ -1118,11 +1157,27 @@ int dos_call( UChar code )
 		}
 		rd [ 0 ] = Nfiles( buf );
 		break;
+	  case 0x50:    /* SETPDB */
+		data = mem_get( stack_adr, S_LONG );
+		if (func_trace_f) {
+			printf("%-10s pdb=$%08X\n", "SETPDB", data);
+		}
+		rd [ 0 ] = Setpdb( data );
+		break;
 	  case 0x51:    /* GETPDB */
 		rd [ 0 ] = psp [ nest_cnt ] + MB_SIZE;
 		if (func_trace_f) {
 			printf("%-10s\n", "GETPDB");
 		}
+		break;
+	  case 0x52:    /* SETENV */
+		data = mem_get( stack_adr, S_LONG );
+		env  = mem_get( stack_adr + 4, S_LONG );
+		buf  = mem_get( stack_adr + 8, S_LONG );
+		if (func_trace_f) {
+			printf("%-10s name=$%08X\n", "SETENV", data);
+		}
+		rd [ 0 ] = Setenv( data, env, buf );
 		break;
 	  case 0x53:    /* GETENV */
 		data = mem_get( stack_adr, S_LONG );
@@ -1162,6 +1217,15 @@ int dos_call( UChar code )
 		}
 		rd [ 0 ] = Malloc( len );
 		break;
+	  case 0x5A:    /* MAKETMP */
+		data = mem_get( stack_adr, S_LONG );
+		srt  = (short)mem_get( stack_adr + 4, S_WORD );
+		if (func_trace_f) {
+			printf("%-10s name=$%08X attr=%d\n", "MAKETMP",
+			       data, srt);
+		}
+		rd [ 0 ] = Maketmp( data, srt );
+		break;
 	  case 0x5B:    /* NEWFILE */
 		data = mem_get( stack_adr, S_LONG );
 		srt  = (short)mem_get( stack_adr + 4, S_WORD );
@@ -1184,6 +1248,34 @@ int dos_call( UChar code )
 			printf("%-10s file_no=%d\n", "GETFCB", fhdl);
 		}
 		rd [ 0 ] = Getfcb( fhdl );
+		break;
+	  case 0x7D:    /* S_MALLOC (0xAD remapped) */
+		srt = (short)mem_get( stack_adr, S_WORD );
+		len = mem_get( stack_adr + 2, S_LONG );
+		data = ((UShort)srt & 0x8000u) != 0
+			? mem_get( stack_adr + 6, S_LONG ) : 0;
+		if (func_trace_f) {
+			printf("%-10s mode=%04X len=%d\n", "S_MALLOC",
+			       (UShort)srt, len);
+		}
+		rd [ 0 ] = S_malloc( srt, len, data );
+		break;
+	  case 0x7E:    /* S_MFREE (0xAE remapped) */
+		data = mem_get( stack_adr, S_LONG );
+		if (func_trace_f) {
+			printf("%-10s adr=$%08X\n", "S_MFREE", data);
+		}
+		rd [ 0 ] = S_mfree( data );
+		break;
+	  case 0x7F:    /* S_PROCESS (0xAF remapped) */
+		srt  = (short)mem_get( stack_adr, S_WORD );
+		data = mem_get( stack_adr + 2, S_LONG );
+		buf  = mem_get( stack_adr + 6, S_LONG );
+		len  = mem_get( stack_adr + 10, S_LONG );
+		if (func_trace_f) {
+			printf("%-10s\n", "S_PROCESS");
+		}
+		rd [ 0 ] = S_process( srt, data, buf, len );
 		break;
 	  case 0xF6:    /* SUPER_JSR */
 		data = mem_get( stack_adr, S_LONG );
@@ -1299,6 +1391,14 @@ static Long Gets( Long buf )
 	buf_ptr[ 1 ] = (char)len;
 	strcpy( &(buf_ptr[ 2 ]), str );
 	return( len );
+}
+
+/*
+ 　機能：DOSCALL GETSSを実行する（ホストTTYではGETSと同実装）
+ */
+static Long Getss( Long buf )
+{
+	return Gets( buf );
 }
 
 /*
@@ -2795,6 +2895,19 @@ static Long Settim2( Long tim )
 }
 
 /*
+ 　機能：DOSCALL SETTIMEを実行する
+ 戻り値：エラーコード
+ */
+static Long Settime( short tim )
+{
+	int hour = (((UShort)tim >> 11) & 0x1f);
+	int minute = (((UShort)tim >> 5) & 0x3f);
+	int second = ((UShort)tim & 0x1f) * 2;
+
+	return run68_set_virtual_time(hour, minute, second) ? 0 : -14;
+}
+
+/*
  　機能：DOSCALL GETENVを実行する
  戻り値：エラーコード
  */
@@ -2807,44 +2920,171 @@ static Long Getenv( Long name, Long env, Long buf )
 	return ret;
 }
 
-Long Getenv_common(const char *name_p, char *buf_p)
+/*
+ 　機能：DOSCALL SETENVを実行する
+ 戻り値：エラーコード
+ */
+static Long Setenv( Long name, Long env, Long value )
 {
-	unsigned char *mem_ptr;
-	/*
-	WIN32の環境変数領域からrun68のエミュレーション領域に複製してある
-	値を検索する仕様にする。
-	 */
-	/*
-	環境エリアの先頭(ENV_TOP)から順に環境変数名を検索する。
-	 */
-	for (mem_ptr = prog_ptr + ENV_TOP + 4;
-		 *mem_ptr != 0;
-		 mem_ptr ++) {
-		char ename[256];
-		int i;
-		/* 環境変数名を取得する。*/
-		for (i = 0; *mem_ptr != '\0' && *mem_ptr != '='; i ++) {
-			ename[i] = *(mem_ptr ++);
-		}
-		ename[i] = '\0';
-		if (_stricmp(name_p, ename) == 0) {
-			/* 環境変数が見つかった。*/
-			while (*mem_ptr == '=' || *mem_ptr == ' ') {
-				mem_ptr ++;
-			}
-			/* 空文字列の場合もある。*/
-			/*            *buf_p = (Long)((char*)mem_ptr - prog_ptr);*/
-			strcpy(buf_p, mem_ptr);
-			return 0;
-		}
-		/* 変数名が一致しなかったら、変数の値をスキップする。*/
-		while (*mem_ptr)
-			mem_ptr ++;
-		/* '\0'の後にもう一つ'\0'が続く場合は、環境変数領域の終りである。*/
+	const char *name_ptr;
+	const char *value_ptr;
+
+	if ( env != 0 )
+		return( -10 );
+	name_ptr = guest_string(name);
+	if (name_ptr == NULL)
+		return( -14 );
+	if ( value == 0 )
+		value_ptr = NULL;
+	else
+		value_ptr = guest_string(value);
+	if (value != 0 && value_ptr == NULL)
+		return( -14 );
+	return Setenv_common(name_ptr, value_ptr);
+}
+
+static Long Wait( void )
+{
+	/* EXEC is synchronous, so D0 already contains the last child result. */
+	return rd [ 0 ];
+}
+
+static Long Setpdb( Long pdb )
+{
+	Long prev = psp [ nest_cnt ] + MB_SIZE;
+
+	if ( pdb < MB_SIZE || (ULong)pdb > (ULong)mem_aloc )
+		return -14;
+	psp [ nest_cnt ] = pdb - MB_SIZE;
+	return prev;
+}
+
+static Long Fatchk( Long file, Long raw_buf, UShort buffer_size )
+{
+	struct stat info;
+	const char *path;
+	char normalized[256];
+	ULong buffer = (ULong)raw_buf;
+	BOOL bounded = (buffer & UINT32_C(0x80000000)) != 0;
+	ULong sectors;
+	const ULong result_size = 10;
+
+	path = guest_string(file);
+	buffer &= UINT32_C(0x7fffffff);
+	if (path == NULL || !host_path(path, normalized, sizeof(normalized)) ||
+	    buffer > (ULong)mem_aloc ||
+	    result_size > (ULong)mem_aloc - buffer ||
+	    (bounded && buffer_size < result_size))
+		return -14;
+	if (stat(normalized, &info) != 0)
+		return -2; /* ファイルが見つからない */
+	/* Host files are represented as one contiguous synthetic sector run. */
+	sectors = (ULong)(((uint64_t)info.st_size + 1023u) / 1024u);
+	mem_set((Long)buffer, 0, S_WORD);       /* drive A: */
+	mem_set((Long)buffer + 2, 1, S_LONG);  /* first sector */
+	mem_set((Long)buffer + 6, (Long)sectors, S_LONG);
+	return (Long)result_size;
+}
+
+static Long Maketmp( Long name, short attr )
+{
+	char *path;
+	char *mark;
+	int i;
+	int width = 4;
+
+	(void)attr;
+	path = (char *)guest_string(name);
+	if (path == NULL)
+		return -14;
+	mark = strstr(path, "????");
+	if (mark == NULL) {
+		mark = strstr(path, "???");
+		width = 3;
 	}
-	/* 変数が見つからなかったらNULLポインタを返す。*/
-	(*buf_p) = 0;
-	return -10;
+	if (mark == NULL)
+		return Newfile(path, attr);
+
+	for (i = 0; i < 10000; i++) {
+		char trial[256];
+		char normalized[256];
+		FILE *fp;
+		size_t prefix = (size_t)(mark - path);
+		int written;
+
+		if (prefix + (size_t)width >= sizeof(trial))
+			return -13;
+		memcpy(trial, path, prefix);
+		written = snprintf(trial + prefix, sizeof(trial) - prefix,
+		                   "%0*d%s", width, i, mark + width);
+		if (written < 0 || (size_t)written >= sizeof(trial) - prefix ||
+		    !host_path(trial, normalized, sizeof(normalized)))
+			return -13;
+		fp = fopen(normalized, "rb");
+		if (fp != NULL) {
+			fclose(fp);
+			continue;
+		}
+		strcpy(path, trial);
+		return Newfile(path, attr);
+	}
+	return -23; /* ディレクトリが一杯 */
+}
+
+static Long S_malloc( short mode, Long size, Long owner )
+{
+	if (((UShort)mode & 0x7fffu) > 2u)
+		return -14;
+	if (((UShort)mode & 0x8000u) != 0 && owner != 0)
+		return -14; /* Explicit sub-memory owners are not implemented. */
+	return Malloc(size);
+}
+
+static Long S_mfree( Long adr )
+{
+	return Mfree(adr);
+}
+
+static Long S_process( short id, Long address, Long length, Long first_block )
+{
+	(void)id;
+	(void)address;
+	(void)length;
+	(void)first_block;
+	return -14; /* Sub-memory process management is not implemented. */
+}
+
+static const char *guest_string( Long address )
+{
+	const char *text;
+	size_t available;
+
+	if (address < 0 || (ULong)address >= (ULong)mem_aloc)
+		return NULL;
+	text = prog_ptr + address;
+	available = (size_t)((ULong)mem_aloc - (ULong)address);
+	return memchr(text, '\0', available) != NULL ? text : NULL;
+}
+
+static BOOL host_path( const char *source, char *destination, size_t size )
+{
+	const char *path = source;
+	size_t i;
+	size_t length;
+
+	if (source == NULL || destination == NULL || size == 0)
+		return FALSE;
+	if (source[0] != '\0' && source[1] == ':')
+		path = source + 2;
+	length = strlen(path);
+	if (length >= size)
+		return FALSE;
+	memcpy(destination, path, length + 1);
+	for (i = 0; i < length; ++i) {
+		if (destination[i] == '\\')
+			destination[i] = '/';
+	}
+	return TRUE;
 }
 
 /*

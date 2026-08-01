@@ -67,6 +67,7 @@
 
 #define	MAIN
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -183,6 +184,7 @@ int main( int argc, char *argv[], char *envp[] )
 Restart:
     arg_len = 0;
 	argbase = 0;
+	stack_size = RUN68_DEFAULT_STACK_SIZE;
 	audio_wav_path = NULL;
 	audio_live = FALSE;
 	raw_input_active = FALSE;
@@ -219,6 +221,34 @@ Restart:
             }
             switch(argv[i][1])
             {
+            case 'S':
+            {
+                char *size_text;
+                char *end = NULL;
+                long kb;
+
+                if (argv[i][2] != '\0') {
+                    size_text = &argv[i][2];
+                } else {
+                    if (i + 1 >= argc) {
+                        fprintf(stderr, "-S にはスタックサイズ(KB)が必要です。\n");
+                        return 1;
+                    }
+                    i++;
+                    size_text = argv[i];
+                }
+				errno = 0;
+				kb = strtol(size_text, &end, 10);
+				if (errno == ERANGE || end == size_text || *end != '\0' ||
+				    kb < RUN68_MIN_STACK_KB || kb > RUN68_MAX_STACK_KB ||
+				    !run68_set_stack_size_kb((Long)kb)) {
+                    fprintf(stderr,
+                            "-S の値は %d〜%d (KB) の整数で指定してください。\n",
+                            RUN68_MIN_STACK_KB, RUN68_MAX_STACK_KB);
+                    return 1;
+                }
+                break;
+            }
             case 't':
                if (strlen(argv[i]) == 2)
                 {
@@ -318,10 +348,10 @@ Restart:
 		fprintf(stderr, "             -f         function call trace\n");
 		fprintf(stderr, "             -t         mpu trace\n");
 		fprintf(stderr, "             -debug     run with debugger\n");
+		fprintf(stderr, "             -S  size   stack size in KB (default 64)\n");
 		fprintf(stderr, "             --cpu=legacy|musashi  select MPU backend\n");
 		fprintf(stderr, "             --audio=live          play YM2151 in real time\n");
 		fprintf(stderr, "             --audio=wav:file      write YM2151 audio\n");
-//		fprintf(stderr, "             -S  size   実行時スタックサイズ指定(単位KB、未実装)\n");
 		return( 1 );
 	}
 
@@ -330,13 +360,20 @@ Restart:
 	/* iniファイルのフルパス名が得られる。*/
 	read_ini(ini_file_name, fname);
 
+	if (!run68_stack_fits_memory(mem_aloc)) {
+		fprintf(stderr,
+		        "スタックサイズ(%ldKB)がメモリサイズに対して大きすぎます。\n",
+		        (long)(stack_size / 1024));
+		return( 1 );
+	}
+
 	/* メモリを確保する */
 	if ( (prog_ptr=calloc( 1, mem_aloc )) == NULL ) {
 		fprintf(stderr, "メモリが確保できません\n");
 		return( 1 );
 	}
 	/* A0,A2,A3レジスタに値を設定 */
-	ra [ 0 ] = STACK_TOP + STACK_SIZE;	/* メモリ管理ブロックのアドレス */
+	ra [ 0 ] = STACK_TOP + stack_size;	/* メモリ管理ブロックのアドレス */
 	ra [ 2 ] = STACK_TOP;			/* コマンドラインのアドレス */
 	ra [ 3 ] = ENV_TOP;			/* 環境のアドレス */
 
@@ -501,7 +538,7 @@ Restart:
 	}
 
 	/* 実行 */
-	ra [ 7 ] = STACK_TOP + STACK_SIZE;
+	ra [ 7 ] = STACK_TOP + stack_size;
 	usp = ra [ 7 ];
 	ssp = ra [ 7 ];
 	superjsr_ret = 0;

@@ -53,6 +53,7 @@
 
 static	int	Lea( char, char );
 static	int	Link( char );
+static	int	Link_l( char );
 static	int	Unlk( char );
 static	int	Tas( char );
 static	int	Tst( char );
@@ -135,8 +136,8 @@ int	line4( char *pc_ptr )
 			} else {
 				if ((code2 & 0xC0) == 0 ) {
 					if ( ((code2 & 0x38) >> 3) == 0x01 ) {
-						/* link.l am,$12345678 等 未実装 */ 
-						;
+						/* link.l An,#imm32 (68020+) */
+						return( Link_l( code2 ) );
 					}else{
 						/* nbcd */
 						return( Nbcd( code2 ) );
@@ -243,6 +244,31 @@ static	int	Link( char code )
 
 #ifdef	TRACE
 	printf( "trace: link     len=%d PC=%06lX\n", len, adjust_address(pc, -2) );
+#endif
+
+	return( FALSE );
+}
+
+/*
+ 　機能：link.l命令を実行する
+ 戻り値： TRUE = 実行終了
+         FALSE = 実行継続
+*/
+static	int	Link_l( char code )
+{
+	char	reg;
+	Long	len;
+
+	reg = (code & 0x07);
+	len = imi_get( S_LONG );
+
+	ra [ 7 ] = adjust_address(ra [ 7 ], -4);
+	mem_set( ra [ 7 ], ra [ reg ], S_LONG );
+	ra [ reg ] = ra [ 7 ];
+	ra [ 7 ] = adjust_address(ra [ 7 ], len);
+
+#ifdef	TRACE
+	printf( "trace: link.l   len=%d PC=%06lX\n", len, adjust_address(pc, -2) );
 #endif
 
 	return( FALSE );

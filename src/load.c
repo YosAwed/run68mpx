@@ -42,7 +42,6 @@ static	ULong	xhead_getl( int );
 static	int	set_fname( char *, Long );
 
 /* doscall.c */
-Long Getenv_common(const char *name_p, char *buf_p);
 
 static char *GetAPath(char **path_p, char *buf);
 

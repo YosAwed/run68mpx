@@ -1,0 +1,2 @@
+*.c whitespace=cr-at-eol
+*.h whitespace=cr-at-eol

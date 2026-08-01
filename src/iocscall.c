@@ -174,8 +174,8 @@ int iocs_call()
 			printf( "%c[s\n%c[u%c[1B", 0x1B, 0x1B, 0x1B );
 			rd[0] = 0;
 			break;
-		case 0x25:	/* B_UP_S *//* (スクロール未サポート) */
-			printf( "%c[1A", 0x1B );
+		case 0x25:	/* B_UP_S: scroll viewport down one line */
+			printf( "\033[1T" );
 			rd[0] = 0;
 			break;
 		case 0x26:	/* B_UP */

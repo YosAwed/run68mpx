@@ -45,7 +45,9 @@ Human68k の実行ファイル（`.x` / `.r`）を macOS などのターミナ�
 ### CLI向けDOSCALL／IOCSCALL
 
 - DOSCALLの`PUTCHAR`、`KEYSNS`、`KFLUSH`、`KEYCTRL`の先読み、`CURDRV`をPOSIX端末で動作するよう修正
-- `GETDATE`／`SETDATE`と`GETTIME`／`SETTIM2`を仮想RTCへ接続。ゲストから日時を変更してもMac本体のシステム時計は変更しない
+- `GETDATE`／`SETDATE`と`GETTIME`／`SETTIME`／`SETTIM2`を仮想RTCへ接続。ゲストから日時を変更してもMac本体のシステム時計は変更しない
+- `SETENV`／`GETENV`でゲスト環境ブロックを更新・参照。`GETSS`、`WAIT`、`SETPDB`、`MAKETMP`、`FATCHK`、`S_MALLOC`／`S_MFREE`をCLI向けに接続（`S_PROCESS`によるサブメモリ管理は未対応）
+- `-S size`で実行時スタックサイズ（KB）を指定可能（既定64KB）
 - IOCSの`B_KEYINP`、`B_KEYSNS`、`B_SFTSNS`、`KEY_INIT`を標準入力へ接続し、通常キーのX68000スキャンコードを返す
 - `B_CURON`、`B_CUROFF`、`B_UP`、`B_DOWN`、`B_RIGHT`、`B_LEFT`、`B_CLR_ST`、`B_ERA_ST`、`B_INS`、`B_DEL`をANSIエスケープシーケンスで実装
 - `DATEBCD`、`DATESET`、`TIMEBCD`、`TIMESET`、`DATECNV`、`TIMECNV`を実装し、既存の`DATEGET`／`TIMEGET`のBCD形式と月計算を修正
@@ -61,7 +63,7 @@ VRAM、物理ディスク、シリアル、マウスなど、上記以外の実�
 ### ビルドと品質確認
 
 - Apple Silicon／Intel macOSおよびLinuxを対象にしたCI構成へ更新
-- CTestによる22系統の回帰テストを追加し、CPU命令、例外、メモリ、ローダ、DOSファイル検索、CLI向けIOCS、Musashiバックエンド、OPM／ADPCM／PCM8音声を検証
+- CTestによる24系統の回帰テストを追加し、CPU命令、例外、メモリ、ローダ、スタックレイアウト、DOSファイル検索、CLI向けDOS／IOCS、Musashiバックエンド、OPM／ADPCM／PCM8音声を検証
 - AddressSanitizer／UndefinedBehaviorSanitizerを有効にできる `RUN68_ENABLE_SANITIZERS` オプションを追加
 - コンパイラ警告を強化し、現在のバージョン表示を `0.10.0` に更新
 
@@ -119,17 +121,29 @@ ctest --test-dir build-sanitize --output-on-failure
 python3 scripts/compare_cpu_backends.py \
   --run68 build/run68 \
   --samples /path/to/x-files \
+  --include-r \
+  --exclude-file scripts/corpus_exclude.example.txt \
+  --json-out /tmp/corpus.json \
+  --csv-out /tmp/corpus.csv \
+  --fail-list /tmp/corpus-fail.txt \
   --timeout 5
 ```
 
-各Xファイルを短い一時パスへコピーして両バックエンドで実行し、終了状態、
-標準出力、標準エラーを比較します。入力待ちやハードウェア待ちのプログラムは
-指定秒数で打ち切ります。
+各サンプルを短い一時パスへコピーして両バックエンドで実行し、終了状態、
+標準出力、標準エラーを比較します。DIFFは exit_code / stdout / stderr /
+timeout_mismatch などに分類され、JSON/CSVへ出力できます。入力待ちや
+ハードウェア待ちのプログラムは指定秒数で打ち切り、`--exclude-file`で除外できます。
 
 ## 使い方
 
 ```sh
 ./build/run68 program.x [引数...]
+```
+
+スタックサイズを変更する場合（単位はKB、既定は64）:
+
+```sh
+./build/run68 -S 128 program.x
 ```
 
 MPUバックエンドは、従来コアが既定です。実験的なMusashiバックエンドは
