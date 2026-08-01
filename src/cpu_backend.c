@@ -83,13 +83,15 @@ static int musashi_trap_callback(int trap_number)
 {
 	int finished;
 
-	if (trap_number != 15)
+	if (trap_number != 2 && trap_number != 15)
 		return 0;
 
 	musashi_sync_from_core();
-	finished = iocs_call();
-	if (finished)
+	finished = trap_number == 2 ? pcm8_call() : iocs_call();
+	if (finished) {
 		musashi_finished = TRUE;
+		m68k_end_timeslice();
+	}
 	musashi_sync_to_core();
 	return 1;
 }
@@ -115,8 +117,10 @@ static unsigned int musashi_read_16(unsigned int address, BOOL immediate)
 		musashi_sync_from_core();
 		pc = (Long)normalized;
 		finished = linef(prog_ptr + normalized);
-		if (finished)
+		if (finished) {
 			musashi_finished = TRUE;
+			m68k_end_timeslice();
+		}
 		musashi_sync_to_core();
 		return 0x4e71u; /* Execute a harmless NOP in place of the HLE opcode. */
 	}
@@ -173,20 +177,32 @@ void cpu_backend_prepare(void)
 
 BOOL cpu_backend_execute_one(void)
 {
+	return cpu_backend_execute_cycles(1);
+}
+
+BOOL cpu_backend_execute_cycles(unsigned int cycle_budget)
+{
 	last_cycles = 0;
 	if (selected_backend == RUN68_CPU_LEGACY)
 		return prog_exec();
+	if (cycle_budget == 0)
+		cycle_budget = 1;
 
 	musashi_finished = FALSE;
 	opcode_fetch_expected = FALSE;
 	musashi_sync_to_core();
 	musashi_instruction_seen = FALSE;
-	musashi_step_active = TRUE;
-	if (setjmp(musashi_step_boundary) == 0)
-		last_cycles = (unsigned int)m68k_execute(1);
-	else
-		last_cycles = (unsigned int)m68k_cycles_run();
-	musashi_step_active = FALSE;
+	if (cycle_budget == 1) {
+		musashi_step_active = TRUE;
+		if (setjmp(musashi_step_boundary) == 0)
+			last_cycles = (unsigned int)m68k_execute(1);
+		else
+			last_cycles = (unsigned int)m68k_cycles_run();
+		musashi_step_active = FALSE;
+	} else {
+		musashi_step_active = FALSE;
+		last_cycles = (unsigned int)m68k_execute((int)cycle_budget);
+	}
 	musashi_sync_from_core();
 	return musashi_finished;
 }

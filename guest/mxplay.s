@@ -90,17 +90,15 @@ start:
 	bmi	format_error
 	move.l	d0,mdx_length
 
-*	If the MDX names a PDX file, load it from the MDX directory and
-*	transfer the MXDRV PCM wrapper before the MML wrapper.
-	bsr	load_pdx
-	tst.l	d0
-	bmi	pdx_error
-	beq	pdx_ready
+*	Tell the MML wrapper which PCM slot it will use. MXDRV expects the
+*	MML transfer first and the matching PCM transfer second.
+	tst.b	pdx_name
+	beq	mdx_ready
 	lea	mdx_buffer(pc),a0
 	clr.w	2(a0)			* mark PDX number 0 as available
-pdx_ready:
+mdx_ready:
 
-*	Install the MDX data, then start playback.
+*	Install the MDX data.
 	lea	mdx_buffer(pc),a1
 	move.l	mdx_length(pc),d1
 	moveq	#$02,d0			* LOADMML
@@ -108,6 +106,13 @@ pdx_ready:
 	tst.l	d0
 	bmi	load_error
 
+*	If the MDX names a PDX file, load it from the MDX directory and
+*	transfer its MXDRV PCM wrapper after the MML wrapper.
+	bsr	load_pdx
+	tst.l	d0
+	bmi	pdx_error
+
+*	Start playback.
 	moveq	#0,d1			* MML number 0
 	moveq	#$04,d0			* M_PLAY
 	trap	#4

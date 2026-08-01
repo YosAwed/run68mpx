@@ -4,12 +4,16 @@
 #include <string.h>
 
 enum {
-	MSM6258_MIN_SIGNAL = -2048,
-	MSM6258_MAX_SIGNAL = 2047,
-	MSM6258_MAX_STEP = 48
+	/* The X68000 configures the MSM6258 for its 10-bit output mode. */
+	MSM6258_MIN_SIGNAL = -512,
+	MSM6258_MAX_SIGNAL = 511,
+	PCM8_MIN_SIGNAL = -2047,
+	PCM8_MAX_SIGNAL = 2047,
+	MSM6258_MAX_STEP = 48,
+	PCM8_CHANNELS = 8
 };
 
-struct X68K_MSM6258 {
+typedef struct X68K_ADPCM_VOICE {
 	uint8_t *data;
 	size_t length;
 	size_t nibble_position;
@@ -17,11 +21,27 @@ struct X68K_MSM6258 {
 	uint32_t sample_divisor;
 	int signal;
 	int step;
-	int previous_input;
-	int filter_output;
 	uint8_t pan;
+	uint8_t volume;
+	int minimum_signal;
+	int maximum_signal;
+	int output_scale;
+	int pcm8_filter;
+	int64_t input_pcm;
+	int64_t previous_input_pcm;
+	int64_t filtered_input_pcm;
+	int64_t previous_filtered_input_pcm;
+	int64_t filtered_pcm;
 	int active;
 	int paused;
+} X68K_ADPCM_VOICE;
+
+struct X68K_MSM6258 {
+	X68K_ADPCM_VOICE voice;
+};
+
+struct X68K_PCM8 {
+	X68K_ADPCM_VOICE voices[PCM8_CHANNELS];
 };
 
 /* OKI MSM6258 4-bit ADPCM step values. */
@@ -37,6 +57,11 @@ static const int step_adjust[8] = {-1, -1, -1, -1, 2, 4, 6, 8};
 /* 62500 Hz / these divisors gives the five IOCS ADPCM rates. */
 static const uint8_t rate_divisors[5] = {16, 12, 8, 6, 4};
 
+/* X68Sound-compatible PCM8 volume steps. Index 8 is unity. */
+static const uint8_t pcm8_volumes[16] = {
+	2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 64, 80
+};
+
 static int16_t mix_sample(int16_t original, int addition)
 {
 	int mixed = (int)original + addition;
@@ -48,26 +73,58 @@ static int16_t mix_sample(int16_t original, int addition)
 	return (int16_t)mixed;
 }
 
-static int decode_nibble(X68K_MSM6258 *device)
+static int64_t arithmetic_shift_right(int64_t value, unsigned int bits)
+{
+	int64_t divisor = INT64_C(1) << bits;
+
+	if (value >= 0)
+		return value / divisor;
+	return -((-value + divisor - 1) / divisor);
+}
+
+static void voice_initialize(X68K_ADPCM_VOICE *voice, int pcm8)
+{
+	memset(voice, 0, sizeof(*voice));
+	voice->sample_divisor = rate_divisors[4];
+	voice->pan = 3;
+	voice->volume = 16;
+	voice->minimum_signal = pcm8 ? PCM8_MIN_SIGNAL : MSM6258_MIN_SIGNAL;
+	voice->maximum_signal = pcm8 ? PCM8_MAX_SIGNAL : MSM6258_MAX_SIGNAL;
+	/* Preserve the existing hardware ADPCM level; PCM8 index 8 is unity. */
+	voice->output_scale = pcm8 ? 2 : 8;
+	voice->pcm8_filter = pcm8;
+}
+
+static void voice_release(X68K_ADPCM_VOICE *voice)
+{
+	free(voice->data);
+	voice->data = NULL;
+	voice->length = 0;
+	voice->nibble_position = 0;
+	voice->active = 0;
+	voice->paused = 0;
+}
+
+static int decode_nibble(X68K_ADPCM_VOICE *voice)
 {
 	size_t byte_position;
 	uint8_t value;
 	int magnitude;
 	int delta;
 
-	if (device->nibble_position >= device->length * 2u) {
-		device->active = 0;
+	if (voice->nibble_position >= voice->length * 2u) {
+		voice->active = 0;
 		return 0;
 	}
-	byte_position = device->nibble_position / 2u;
-	value = device->data[byte_position];
-	if ((device->nibble_position & 1u) == 0)
+	byte_position = voice->nibble_position / 2u;
+	value = voice->data[byte_position];
+	if ((voice->nibble_position & 1u) == 0)
 		value &= 0x0f;
 	else
 		value >>= 4;
-	device->nibble_position++;
+	voice->nibble_position++;
 
-	magnitude = step_table[device->step];
+	magnitude = step_table[voice->step];
 	delta = magnitude / 8;
 	if ((value & 1u) != 0)
 		delta += magnitude / 4;
@@ -77,43 +134,26 @@ static int decode_nibble(X68K_MSM6258 *device)
 		delta += magnitude;
 	if ((value & 8u) != 0)
 		delta = -delta;
-	device->signal += delta;
-	if (device->signal > MSM6258_MAX_SIGNAL)
-		device->signal = MSM6258_MAX_SIGNAL;
-	else if (device->signal < MSM6258_MIN_SIGNAL)
-		device->signal = MSM6258_MIN_SIGNAL;
+	voice->signal += delta;
+	if (voice->signal > voice->maximum_signal)
+		voice->signal = voice->maximum_signal;
+	else if (voice->signal < voice->minimum_signal)
+		voice->signal = voice->minimum_signal;
 
-	device->step += step_adjust[value & 7u];
-	if (device->step > MSM6258_MAX_STEP)
-		device->step = MSM6258_MAX_STEP;
-	else if (device->step < 0)
-		device->step = 0;
+	voice->step += step_adjust[value & 7u];
+	if (voice->step > MSM6258_MAX_STEP)
+		voice->step = MSM6258_MAX_STEP;
+	else if (voice->step < 0)
+		voice->step = 0;
 	return 1;
 }
 
-X68K_MSM6258 *x68k_msm6258_create(void)
-{
-	return (X68K_MSM6258 *)calloc(1, sizeof(X68K_MSM6258));
-}
-
-void x68k_msm6258_destroy(X68K_MSM6258 *device)
-{
-	if (device == NULL)
-		return;
-	free(device->data);
-	free(device);
-}
-
-int x68k_msm6258_start(X68K_MSM6258 *device, const uint8_t *data,
-	size_t length, uint16_t mode)
+static int voice_replace_data(X68K_ADPCM_VOICE *voice,
+	const uint8_t *data, size_t length)
 {
 	uint8_t *copy = NULL;
-	unsigned int frequency = mode >> 8;
-	unsigned int pan = mode & 0xffu;
 
-	if (device == NULL || frequency >= 5 || pan >= 4 ||
-	    length > SIZE_MAX / 2u ||
-	    (length != 0 && data == NULL))
+	if (length > SIZE_MAX / 2u || (length != 0 && data == NULL))
 		return -1;
 	if (length != 0) {
 		copy = (uint8_t *)malloc(length);
@@ -121,40 +161,121 @@ int x68k_msm6258_start(X68K_MSM6258 *device, const uint8_t *data,
 			return -1;
 		memcpy(copy, data, length);
 	}
-	free(device->data);
-	device->data = copy;
-	device->length = length;
-	device->nibble_position = 0;
-	device->sample_phase = 0;
-	device->sample_divisor = rate_divisors[frequency];
-	device->signal = 0;
-	device->step = 0;
-	device->previous_input = 0;
-	device->filter_output = 0;
-	device->pan = (uint8_t)pan;
-	device->active = length != 0;
-	device->paused = 0;
+	free(voice->data);
+	voice->data = copy;
+	voice->length = length;
+	voice->nibble_position = 0;
+	voice->sample_phase = voice->sample_divisor - 1u;
+	voice->signal = voice->pcm8_filter ? 0 : -2;
+	voice->step = 0;
+	voice->input_pcm = 0;
+	voice->previous_input_pcm = 0;
+	voice->filtered_input_pcm = 0;
+	voice->previous_filtered_input_pcm = 0;
+	voice->filtered_pcm = 0;
+	voice->active = length != 0 && voice->pan != 0;
+	voice->paused = 0;
 	return 0;
+}
+
+static int voice_next_output(X68K_ADPCM_VOICE *voice)
+{
+	int remainder;
+	int quantized_signal;
+	int64_t next_filtered_input;
+	int64_t next_filtered_pcm;
+
+	if (!voice->active || voice->paused)
+		return 0;
+	voice->sample_phase++;
+	while (voice->sample_phase >= voice->sample_divisor) {
+		voice->sample_phase -= voice->sample_divisor;
+		if (!decode_nibble(voice))
+			return 0;
+	}
+	if (!voice->pcm8_filter)
+		return voice->signal * voice->output_scale * voice->volume / 16;
+
+	/* Match X68Sound's 62.5 kHz PCM8 reconstruction filters. */
+	remainder = voice->signal % 4;
+	if (remainder < 0)
+		remainder += 4;
+	quantized_signal = voice->signal - remainder;
+	voice->input_pcm = (int64_t)quantized_signal * 256;
+	next_filtered_input =
+		(voice->input_pcm - voice->previous_input_pcm) * 512 +
+		voice->filtered_input_pcm -
+		arithmetic_shift_right(voice->filtered_input_pcm, 5) -
+		arithmetic_shift_right(voice->filtered_input_pcm, 10);
+	voice->previous_input_pcm = voice->input_pcm;
+	next_filtered_pcm =
+		next_filtered_input - voice->previous_filtered_input_pcm +
+		voice->filtered_pcm -
+		arithmetic_shift_right(voice->filtered_pcm, 8) -
+		arithmetic_shift_right(voice->filtered_pcm, 9) -
+		arithmetic_shift_right(voice->filtered_pcm, 12);
+	voice->previous_filtered_input_pcm = next_filtered_input;
+	voice->filtered_input_pcm = next_filtered_input;
+	voice->filtered_pcm = next_filtered_pcm;
+	return (int)arithmetic_shift_right(
+		arithmetic_shift_right(next_filtered_pcm, 9) * voice->volume, 4);
+}
+
+X68K_MSM6258 *x68k_msm6258_create(void)
+{
+	X68K_MSM6258 *device =
+		(X68K_MSM6258 *)calloc(1, sizeof(X68K_MSM6258));
+
+	if (device != NULL)
+		voice_initialize(&device->voice, 0);
+	return device;
+}
+
+void x68k_msm6258_destroy(X68K_MSM6258 *device)
+{
+	if (device == NULL)
+		return;
+	voice_release(&device->voice);
+	free(device);
+}
+
+int x68k_msm6258_start(X68K_MSM6258 *device, const uint8_t *data,
+	size_t length, uint16_t mode)
+{
+	unsigned int frequency = mode >> 8;
+	unsigned int pan = mode & 0xffu;
+	X68K_ADPCM_VOICE *voice;
+
+	if (device == NULL || frequency >= 5 || pan >= 4 ||
+	    (length != 0 && data == NULL))
+		return -1;
+	voice = &device->voice;
+	voice->sample_divisor = rate_divisors[frequency];
+	voice->pan = (uint8_t)pan;
+	return voice_replace_data(voice, data, length);
 }
 
 int x68k_msm6258_control(X68K_MSM6258 *device, int mode)
 {
+	X68K_ADPCM_VOICE *voice;
+
 	if (device == NULL || mode < 0 || mode > 2)
 		return -1;
+	voice = &device->voice;
 	if (mode == 0) {
-		device->active = 0;
-		device->paused = 0;
+		voice->active = 0;
+		voice->paused = 0;
 	} else if (mode == 1) {
-		device->paused = 1;
+		voice->paused = 1;
 	} else {
-		device->paused = 0;
+		voice->paused = 0;
 	}
 	return 0;
 }
 
 int x68k_msm6258_status(const X68K_MSM6258 *device)
 {
-	return device != NULL && device->active ? 2 : 0;
+	return device != NULL && device->voice.active ? 2 : 0;
 }
 
 void x68k_msm6258_mix(X68K_MSM6258 *device, int16_t *samples,
@@ -165,31 +286,128 @@ void x68k_msm6258_mix(X68K_MSM6258 *device, int16_t *samples,
 	if (device == NULL || samples == NULL)
 		return;
 	for (frame = 0; frame < frames; ++frame) {
-		int input = 0;
-		int output;
-
-		if (device->active && !device->paused) {
-			device->sample_phase++;
-			while (device->sample_phase >= device->sample_divisor) {
-				device->sample_phase -= device->sample_divisor;
-				if (!decode_nibble(device))
-					break;
-			}
-			if (device->active)
-				input = device->signal * 16;
-		}
-		/* A small DC blocker approximates the X68000 ADPCM output filter. */
-		output = input - device->previous_input +
-		         (device->filter_output * 255) / 256;
-		device->previous_input = input;
-		device->filter_output = output;
-		output /= 2;
+		X68K_ADPCM_VOICE *voice = &device->voice;
+		int output = voice_next_output(voice);
 
 		/* IOCS pan: 0=off, 1=left, 2=right, 3=both. */
-		if ((device->pan & 1u) != 0)
+		if ((voice->pan & 1u) != 0)
 			samples[frame * 2] = mix_sample(samples[frame * 2], output);
-		if ((device->pan & 2u) != 0)
+		if ((voice->pan & 2u) != 0)
 			samples[frame * 2 + 1] =
 				mix_sample(samples[frame * 2 + 1], output);
+	}
+}
+
+X68K_PCM8 *x68k_pcm8_create(void)
+{
+	X68K_PCM8 *mixer = (X68K_PCM8 *)calloc(1, sizeof(*mixer));
+	unsigned int channel;
+
+	if (mixer == NULL)
+		return NULL;
+	for (channel = 0; channel < PCM8_CHANNELS; ++channel)
+		voice_initialize(&mixer->voices[channel], 1);
+	return mixer;
+}
+
+void x68k_pcm8_destroy(X68K_PCM8 *mixer)
+{
+	unsigned int channel;
+
+	if (mixer == NULL)
+		return;
+	for (channel = 0; channel < PCM8_CHANNELS; ++channel)
+		voice_release(&mixer->voices[channel]);
+	free(mixer);
+}
+
+int x68k_pcm8_start(X68K_PCM8 *mixer, unsigned int channel,
+	const uint8_t *data, size_t length, uint32_t mode)
+{
+	X68K_ADPCM_VOICE *voice;
+	unsigned int volume;
+	unsigned int frequency;
+	unsigned int pan;
+
+	if (mixer == NULL || channel >= PCM8_CHANNELS)
+		return -1;
+	voice = &mixer->voices[channel];
+	volume = (mode >> 16) & 0xffu;
+	frequency = (mode >> 8) & 0xffu;
+	pan = mode & 0xffu;
+	if (frequency != 0xffu && (frequency & 7u) >= 5)
+		return -1; /* MXDRV PDX data uses the five ADPCM rates. */
+	if (volume != 0xffu)
+		voice->volume = pcm8_volumes[volume & 15u];
+	if (frequency != 0xffu)
+		voice->sample_divisor = rate_divisors[frequency & 7u];
+	if (pan != 0xffu)
+		voice->pan = (uint8_t)(pan & 3u);
+	return voice_replace_data(voice, data, length);
+}
+
+int x68k_pcm8_stop(X68K_PCM8 *mixer, unsigned int channel)
+{
+	if (mixer == NULL || channel >= PCM8_CHANNELS)
+		return -1;
+	mixer->voices[channel].active = 0;
+	mixer->voices[channel].paused = 0;
+	return 0;
+}
+
+int x68k_pcm8_control(X68K_PCM8 *mixer, int mode)
+{
+	unsigned int channel;
+
+	if (mixer == NULL || mode < 0 || mode > 2)
+		return -1;
+	for (channel = 0; channel < PCM8_CHANNELS; ++channel) {
+		if (mode == 0) {
+			mixer->voices[channel].active = 0;
+			mixer->voices[channel].paused = 0;
+		} else {
+			mixer->voices[channel].paused = mode == 1;
+		}
+	}
+	return 0;
+}
+
+size_t x68k_pcm8_remaining(const X68K_PCM8 *mixer,
+	unsigned int channel)
+{
+	const X68K_ADPCM_VOICE *voice;
+	size_t consumed;
+
+	if (mixer == NULL || channel >= PCM8_CHANNELS)
+		return 0;
+	voice = &mixer->voices[channel];
+	if (!voice->active)
+		return 0;
+	consumed = (voice->nibble_position + 1u) / 2u;
+	return consumed >= voice->length ? 0 : voice->length - consumed;
+}
+
+void x68k_pcm8_mix(X68K_PCM8 *mixer, int16_t *samples, size_t frames)
+{
+	size_t frame;
+
+	if (mixer == NULL || samples == NULL)
+		return;
+	for (frame = 0; frame < frames; ++frame) {
+		int left = samples[frame * 2];
+		int right = samples[frame * 2 + 1];
+		unsigned int channel;
+
+		for (channel = 0; channel < PCM8_CHANNELS; ++channel) {
+			X68K_ADPCM_VOICE *voice = &mixer->voices[channel];
+			int output = voice_next_output(voice);
+
+			if ((voice->pan & 1u) != 0)
+				left += output;
+			if ((voice->pan & 2u) != 0)
+				right += output;
+		}
+		samples[frame * 2] = mix_sample(0, left);
+		samples[frame * 2 + 1] = mix_sample(0, right);
 	}
 }

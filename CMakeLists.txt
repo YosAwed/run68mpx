@@ -76,6 +76,7 @@ set(SRC
     src/load.c
     src/mem.c
     src/msm6258.c
+    src/pcm8.c
     src/run68.c
     src/x68k_audio.c
     src/x68k_bus.c
@@ -205,6 +206,13 @@ if(BUILD_TESTING)
   )
   target_include_directories(run68_test_msm6258 PRIVATE src)
   add_test(NAME msm6258_adpcm COMMAND run68_test_msm6258)
+
+  add_executable(run68_test_pcm8
+    tests/test_pcm8.c
+    src/pcm8.c
+  )
+  target_include_directories(run68_test_pcm8 PRIVATE src)
+  add_test(NAME pcm8_trap_hle COMMAND run68_test_pcm8)
 
   add_executable(run68_test_line8
     tests/test_line8.c
@@ -348,6 +356,7 @@ if(RUN68_ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
             run68_test_ym2151
             run68_test_audio_wav
             run68_test_msm6258
+            run68_test_pcm8
             run68_test_line8
             run68_test_compat
             run68_test_load

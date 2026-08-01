@@ -13,6 +13,7 @@ const char *cpu_backend_name(void);
 BOOL cpu_backend_is_musashi(void);
 void cpu_backend_prepare(void);
 BOOL cpu_backend_execute_one(void);
+BOOL cpu_backend_execute_cycles(unsigned int cycle_budget);
 unsigned int cpu_backend_last_cycles(void);
 void cpu_backend_set_irq(unsigned int level);
 void cpu_backend_set_irq_vector(unsigned int level, int vector);
