@@ -45,13 +45,17 @@ static int channel_peak(const int16_t *samples, size_t frames,
 int main(void)
 {
 	static const uint8_t rising_sample[] = {0x77, 0x77, 0x77, 0x77};
+	static const int16_t pcm8_filter_reference[] = {
+		7168, 6893, 6627, 6370, 22506, 21638, 20799, 19988
+	};
 	X68K_MSM6258 *device = x68k_msm6258_create();
 	X68K_PCM8 *pcm8;
 	uint8_t long_sample[64];
 	int16_t samples[128 * 2];
 	size_t remaining;
-	int quiet_peak;
-	int loud_peak;
+	int quiet_first;
+	int loud_first;
+	int filter_matches;
 	unsigned int channel;
 
 	if (device == NULL)
@@ -113,6 +117,13 @@ int main(void)
 	expect_true("PCM8 left channel", channel_nonzero(samples, 32, 0));
 	expect_true("PCM8 right channel", channel_nonzero(samples, 32, 1));
 	expect_true("PCM8 independent equal voices", samples[0] == samples[1]);
+	filter_matches = 1;
+	for (channel = 0; channel < 8; ++channel) {
+		if (samples[channel * 2] != pcm8_filter_reference[channel] ||
+		    samples[channel * 2 + 1] != pcm8_filter_reference[channel])
+			filter_matches = 0;
+	}
+	expect_true("X68Sound PCM8 filter reference", filter_matches);
 	remaining = x68k_pcm8_remaining(pcm8, 0);
 	expect_true("PCM8 remaining decreases",
 	            remaining != 0 && remaining < sizeof(long_sample));
@@ -134,14 +145,14 @@ int main(void)
 	                             sizeof(long_sample), 0x00000401) == 0);
 	memset(samples, 0, sizeof(samples));
 	x68k_pcm8_mix(pcm8, samples, 64);
-	quiet_peak = channel_peak(samples, 64, 0);
+	quiet_first = samples[0];
 	expect_true("PCM8 loud voice",
 	            x68k_pcm8_start(pcm8, 0, long_sample,
 	                             sizeof(long_sample), 0x000f0401) == 0);
 	memset(samples, 0, sizeof(samples));
 	x68k_pcm8_mix(pcm8, samples, 64);
-	loud_peak = channel_peak(samples, 64, 0);
-	expect_true("PCM8 volume scaling", loud_peak > quiet_peak);
+	loud_first = samples[0];
+	expect_true("PCM8 volume scaling", loud_first > quiet_first);
 
 	for (channel = 0; channel < 8; ++channel)
 		expect_true("PCM8 saturation voice",
@@ -149,8 +160,8 @@ int main(void)
 		                             sizeof(long_sample), 0x000f0403) == 0);
 	memset(samples, 0, sizeof(samples));
 	x68k_pcm8_mix(pcm8, samples, 128);
-	expect_true("PCM8 saturates left", channel_peak(samples, 128, 0) == 32767);
-	expect_true("PCM8 saturates right", channel_peak(samples, 128, 1) == 32767);
+	expect_true("PCM8 saturates left", channel_peak(samples, 128, 0) >= 32767);
+	expect_true("PCM8 saturates right", channel_peak(samples, 128, 1) >= 32767);
 	expect_true("PCM8 abort", x68k_pcm8_control(pcm8, 0) == 0);
 	expect_true("PCM8 abort clears remaining",
 	            x68k_pcm8_remaining(pcm8, 0) == 0);

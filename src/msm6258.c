@@ -26,6 +26,12 @@ typedef struct X68K_ADPCM_VOICE {
 	int minimum_signal;
 	int maximum_signal;
 	int output_scale;
+	int pcm8_filter;
+	int64_t input_pcm;
+	int64_t previous_input_pcm;
+	int64_t filtered_input_pcm;
+	int64_t previous_filtered_input_pcm;
+	int64_t filtered_pcm;
 	int active;
 	int paused;
 } X68K_ADPCM_VOICE;
@@ -67,6 +73,15 @@ static int16_t mix_sample(int16_t original, int addition)
 	return (int16_t)mixed;
 }
 
+static int64_t arithmetic_shift_right(int64_t value, unsigned int bits)
+{
+	int64_t divisor = INT64_C(1) << bits;
+
+	if (value >= 0)
+		return value / divisor;
+	return -((-value + divisor - 1) / divisor);
+}
+
 static void voice_initialize(X68K_ADPCM_VOICE *voice, int pcm8)
 {
 	memset(voice, 0, sizeof(*voice));
@@ -77,6 +92,7 @@ static void voice_initialize(X68K_ADPCM_VOICE *voice, int pcm8)
 	voice->maximum_signal = pcm8 ? PCM8_MAX_SIGNAL : MSM6258_MAX_SIGNAL;
 	/* Preserve the existing hardware ADPCM level; PCM8 index 8 is unity. */
 	voice->output_scale = pcm8 ? 2 : 8;
+	voice->pcm8_filter = pcm8;
 }
 
 static void voice_release(X68K_ADPCM_VOICE *voice)
@@ -150,8 +166,13 @@ static int voice_replace_data(X68K_ADPCM_VOICE *voice,
 	voice->length = length;
 	voice->nibble_position = 0;
 	voice->sample_phase = voice->sample_divisor - 1u;
-	voice->signal = -2;
+	voice->signal = voice->pcm8_filter ? 0 : -2;
 	voice->step = 0;
+	voice->input_pcm = 0;
+	voice->previous_input_pcm = 0;
+	voice->filtered_input_pcm = 0;
+	voice->previous_filtered_input_pcm = 0;
+	voice->filtered_pcm = 0;
 	voice->active = length != 0 && voice->pan != 0;
 	voice->paused = 0;
 	return 0;
@@ -159,6 +180,11 @@ static int voice_replace_data(X68K_ADPCM_VOICE *voice,
 
 static int voice_next_output(X68K_ADPCM_VOICE *voice)
 {
+	int remainder;
+	int quantized_signal;
+	int64_t next_filtered_input;
+	int64_t next_filtered_pcm;
+
 	if (!voice->active || voice->paused)
 		return 0;
 	voice->sample_phase++;
@@ -167,7 +193,32 @@ static int voice_next_output(X68K_ADPCM_VOICE *voice)
 		if (!decode_nibble(voice))
 			return 0;
 	}
-	return voice->signal * voice->output_scale * voice->volume / 16;
+	if (!voice->pcm8_filter)
+		return voice->signal * voice->output_scale * voice->volume / 16;
+
+	/* Match X68Sound's 62.5 kHz PCM8 reconstruction filters. */
+	remainder = voice->signal % 4;
+	if (remainder < 0)
+		remainder += 4;
+	quantized_signal = voice->signal - remainder;
+	voice->input_pcm = (int64_t)quantized_signal * 256;
+	next_filtered_input =
+		(voice->input_pcm - voice->previous_input_pcm) * 512 +
+		voice->filtered_input_pcm -
+		arithmetic_shift_right(voice->filtered_input_pcm, 5) -
+		arithmetic_shift_right(voice->filtered_input_pcm, 10);
+	voice->previous_input_pcm = voice->input_pcm;
+	next_filtered_pcm =
+		next_filtered_input - voice->previous_filtered_input_pcm +
+		voice->filtered_pcm -
+		arithmetic_shift_right(voice->filtered_pcm, 8) -
+		arithmetic_shift_right(voice->filtered_pcm, 9) -
+		arithmetic_shift_right(voice->filtered_pcm, 12);
+	voice->previous_filtered_input_pcm = next_filtered_input;
+	voice->filtered_input_pcm = next_filtered_input;
+	voice->filtered_pcm = next_filtered_pcm;
+	return (int)arithmetic_shift_right(
+		arithmetic_shift_right(next_filtered_pcm, 9) * voice->volume, 4);
 }
 
 X68K_MSM6258 *x68k_msm6258_create(void)
