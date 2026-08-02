@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "cpu_backend.h"
+#include "link_l_case.h"
 
 Long ra[8];
 Long rd[9];
@@ -99,8 +100,8 @@ int main(void)
 		return 1;
 
 	pc = 0x10000;
-	ra[0] = 0x22222;
-	ra[7] = 0x30000;
+	ra[0] = (Long)LINK_L_INITIAL_A0;
+	ra[7] = (Long)LINK_L_INITIAL_SP;
 	usp = ra[7];
 	ssp = ra[7];
 	sr = 0;
@@ -109,8 +110,8 @@ int main(void)
 	put_word(0x10004, 0xff2a); /* run68 DOSCALL HLE */
 	put_word(0x10006, 0x4e4f); /* trap #15 / IOCS HLE */
 	put_word(0x10008, 0x4e42); /* trap #2 / PCM8 HLE */
-	put_word(0x1000a, 0x4808); /* link.l a0,#-16 compatibility HLE */
-	mem_set(0x1000c, (Long)UINT32_C(0xfffffff0), S_LONG);
+	put_word(0x1000a, 0x4808); /* link.l a0,#-65536 compatibility HLE */
+	mem_set(0x1000c, (Long)LINK_L_DISPLACEMENT, S_LONG);
 
 	if (!cpu_backend_select("musashi"))
 		return 1;
@@ -141,11 +142,12 @@ int main(void)
 	expect_u32("pcm8 result", 0x2468ace0, (ULong)rd[2]);
 	expect_u32("pcm8 pc", 0x1000a, (ULong)pc);
 	cpu_backend_execute_one();
-	expect_u32("link.l frame", 0x22222,
-	           (ULong)mem_get(0x2fffc, S_LONG));
-	expect_u32("link.l a0", 0x2fffc, (ULong)ra[0]);
-	expect_u32("link.l sp", 0x2ffec, (ULong)ra[7]);
-	expect_u32("link.l pc", 0x10010, (ULong)pc);
+	/* Expected values share the legacy backend's exact state vector. */
+	expect_u32("link.l frame", LINK_L_INITIAL_A0,
+	           (ULong)mem_get((Long)LINK_L_EXPECTED_FRAME, S_LONG));
+	expect_u32("link.l a0", LINK_L_EXPECTED_FRAME, (ULong)ra[0]);
+	expect_u32("link.l sp", LINK_L_EXPECTED_SP, (ULong)ra[7]);
+	expect_u32("link.l pc", LINK_L_EXPECTED_PC, (ULong)pc);
 	put_word(0x10010, 0xff4c);
 	fline_should_finish = TRUE;
 	if (cpu_backend_execute_one() != TRUE) {

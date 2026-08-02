@@ -7,18 +7,6 @@
 
 #include "run68.h"
 
-static const char *guest_string(Long address)
-{
-	const char *text;
-	size_t available;
-
-	if (address < 0 || (ULong)address >= (ULong)mem_aloc)
-		return NULL;
-	text = prog_ptr + address;
-	available = (size_t)((ULong)mem_aloc - (ULong)address);
-	return memchr(text, '\0', available) != NULL ? text : NULL;
-}
-
 static BOOL host_path(const char *source, char *destination, size_t size,
 	                  UShort *drive)
 {
@@ -60,7 +48,7 @@ static Long fatchk(Long file, Long raw_buffer, UShort buffer_size)
 	/* drive.w + one extent + terminator: 8 bytes (word) or 14 (long). */
 	const ULong result_size = extended ? 14u : 8u;
 
-	path = guest_string(file);
+	path = run68_guest_string(file, 255);
 	buffer &= UINT32_C(0x7fffffff);
 	if (path == NULL ||
 	    !host_path(path, normalized, sizeof(normalized), &drive) ||
@@ -89,12 +77,19 @@ static Long fatchk(Long file, Long raw_buffer, UShort buffer_size)
 
 Long run68_fatchk_call(Long stack_address)
 {
-	Long file = mem_get(stack_address, S_LONG);
-	Long buffer = mem_get(stack_address + 4, S_LONG);
+	Long file;
+	Long buffer;
 	UShort buffer_size = 0;
 
+	if (!run68_guest_buffer_ok(stack_address, 8u))
+		return -14;
+	file = mem_get(stack_address, S_LONG);
+	buffer = mem_get(stack_address + 4, S_LONG);
 	/* The legacy form has only two long arguments; LEN.w exists only here. */
-	if (((ULong)buffer & UINT32_C(0x80000000)) != 0)
+	if (((ULong)buffer & UINT32_C(0x80000000)) != 0) {
+		if (!run68_guest_buffer_ok(stack_address, 10u))
+			return -14;
 		buffer_size = (UShort)mem_get(stack_address + 8, S_WORD);
+	}
 	return fatchk(file, buffer, buffer_size);
 }

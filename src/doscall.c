@@ -128,8 +128,6 @@ static Long Setdate( short );
 static Long Gettime( int );
 static Long Settime( short );
 static Long Settim2( Long );
-static Long Getenv( Long, Long, Long );
-static Long Setenv( Long, Long, Long );
 static Long Wait( void );
 static Long Setpdb( Long );
 static Long Maketmp( Long, short );
@@ -153,7 +151,6 @@ static void Exec4( Long );
 static void get_jtime( UShort *, UShort *, int );
 #endif
 static Long gets2( char *, int );
-static const char *guest_string( Long );
 static BOOL host_path( const char *, char *, size_t );
 
 
@@ -1168,22 +1165,18 @@ int dos_call( UChar code )
 		}
 		break;
 	  case 0x52:    /* SETENV */
-		data = mem_get( stack_adr, S_LONG );
-		env  = mem_get( stack_adr + 4, S_LONG );
-		buf  = mem_get( stack_adr + 8, S_LONG );
 		if (func_trace_f) {
-			printf("%-10s name=$%08X\n", "SETENV", data);
+			printf("%-10s name=$%08X\n", "SETENV",
+			       mem_get(stack_adr, S_LONG));
 		}
-		rd [ 0 ] = Setenv( data, env, buf );
+		rd [ 0 ] = run68_setenv_call( stack_adr );
 		break;
 	  case 0x53:    /* GETENV */
-		data = mem_get( stack_adr, S_LONG );
-		env  = mem_get( stack_adr + 4, S_LONG );
-		buf  = mem_get( stack_adr + 8, S_LONG );
 		if (func_trace_f) {
-			printf("%-10s env=%s\n", "GETENV", prog_ptr+data);
+			printf("%-10s name=$%08X\n", "GETENV",
+			       mem_get(stack_adr, S_LONG));
 		}
-		rd [ 0 ] = Getenv( data, env, buf );
+		rd [ 0 ] = run68_getenv_call( stack_adr );
 		break;
 	  case 0x54:    /* VERIFYG */
 		if (func_trace_f) {
@@ -1247,10 +1240,10 @@ int dos_call( UChar code )
 		rd [ 0 ] = Getfcb( fhdl );
 		break;
 	  case 0x7D:    /* S_MALLOC (0xAD remapped) */
-		srt = (short)mem_get( stack_adr, S_WORD );
-		len = mem_get( stack_adr + 2, S_LONG );
-		data = ((UShort)srt & 0x8000u) != 0
-			? mem_get( stack_adr + 6, S_LONG ) : 0;
+		if (!run68_parse_s_malloc_abi(stack_adr, &srt, &len, &data)) {
+			rd [ 0 ] = -14;
+			break;
+		}
 		if (func_trace_f) {
 			printf("%-10s mode=%04X len=%d\n", "S_MALLOC",
 			       (UShort)srt, len);
@@ -1265,10 +1258,10 @@ int dos_call( UChar code )
 		rd [ 0 ] = S_mfree( data );
 		break;
 	  case 0x7F:    /* S_PROCESS (0xAF remapped) */
-		srt  = (short)mem_get( stack_adr, S_WORD );
-		data = mem_get( stack_adr + 2, S_LONG );
-		buf  = mem_get( stack_adr + 6, S_LONG );
-		len  = mem_get( stack_adr + 10, S_LONG );
+		if (!run68_parse_s_process_abi(stack_adr, &srt, &data, &buf, &len)) {
+			rd [ 0 ] = -14;
+			break;
+		}
 		if (func_trace_f) {
 			printf("%-10s\n", "S_PROCESS");
 		}
@@ -2908,47 +2901,6 @@ static Long Settime( short tim )
  　機能：DOSCALL GETENVを実行する
  戻り値：エラーコード
  */
-static Long Getenv( Long name, Long env, Long buf )
-{
-	Long ret;
-	if ( env != 0 )
-		return( -10 );
-	ret = Getenv_common(prog_ptr + name, prog_ptr + buf);
-	return ret;
-}
-
-/*
- 　機能：DOSCALL SETENVを実行する
- 戻り値：エラーコード
- */
-static Long Setenv( Long name, Long env, Long value )
-{
-	const char *name_ptr;
-	const char *value_ptr;
-	Long env_address;
-
-	name_ptr = guest_string(name);
-	if (name_ptr == NULL)
-		return( -14 );
-	if ( value == 0 )
-		value_ptr = NULL;
-	else
-		value_ptr = guest_string(value);
-	if (value != 0 && value_ptr == NULL)
-		return( -14 );
-	if (env != 0) {
-		env_address = env;
-	} else {
-		ULong pdb = (ULong)psp[nest_cnt];
-
-		if ((pdb & 1u) != 0 || pdb > (ULong)mem_aloc ||
-		    0x14u > (ULong)mem_aloc - pdb)
-			return -10;
-		env_address = mem_get((Long)pdb + 0x10, S_LONG);
-	}
-	return Setenv_common(env_address, name_ptr, value_ptr);
-}
-
 static Long Wait( void )
 {
 	/* EXEC is synchronous, so D0 already contains the last child result. */
@@ -2973,7 +2925,7 @@ static Long Maketmp( Long name, short attr )
 	int width = 4;
 
 	(void)attr;
-	path = (char *)guest_string(name);
+	path = (char *)run68_guest_string(name, 255);
 	if (path == NULL)
 		return -14;
 	mark = strstr(path, "????");
@@ -3031,18 +2983,6 @@ static Long S_process( short id, Long address, Long length, Long first_block )
 	(void)length;
 	(void)first_block;
 	return -14; /* Sub-memory process management is not implemented. */
-}
-
-static const char *guest_string( Long address )
-{
-	const char *text;
-	size_t available;
-
-	if (address < 0 || (ULong)address >= (ULong)mem_aloc)
-		return NULL;
-	text = prog_ptr + address;
-	available = (size_t)((ULong)mem_aloc - (ULong)address);
-	return memchr(text, '\0', available) != NULL ? text : NULL;
 }
 
 static BOOL host_path( const char *source, char *destination, size_t size )

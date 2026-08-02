@@ -5,6 +5,69 @@
 
 #include "run68.h"
 
+static Long resolve_env_address(Long env)
+{
+	ULong pdb;
+
+	if (env != 0)
+		return env;
+	pdb = (ULong)psp[nest_cnt];
+	if ((pdb & 1u) != 0 || !run68_guest_buffer_ok((Long)pdb, 0x14u))
+		return -1;
+	return mem_get((Long)pdb + 0x10, S_LONG);
+}
+
+Long run68_setenv_call(Long stack_address)
+{
+	Long name;
+	Long env;
+	Long value;
+	const char *name_ptr;
+	const char *value_ptr;
+	Long env_address;
+
+	if (!run68_guest_buffer_ok(stack_address, 12u))
+		return -14;
+	name = mem_get(stack_address, S_LONG);
+	env = mem_get(stack_address + 4, S_LONG);
+	value = mem_get(stack_address + 8, S_LONG);
+	name_ptr = run68_guest_string(name, 255);
+	if (name_ptr == NULL)
+		return -14;
+	if (value == 0)
+		value_ptr = NULL;
+	else {
+		value_ptr = run68_guest_string(value, 255);
+		if (value_ptr == NULL)
+			return -14;
+	}
+	env_address = resolve_env_address(env);
+	if (env_address < 0)
+		return -10;
+	return Setenv_common(env_address, name_ptr, value_ptr);
+}
+
+Long run68_getenv_call(Long stack_address)
+{
+	Long name;
+	Long env;
+	Long buf;
+	const char *name_ptr;
+
+	if (!run68_guest_buffer_ok(stack_address, 12u))
+		return -14;
+	name = mem_get(stack_address, S_LONG);
+	env = mem_get(stack_address + 4, S_LONG);
+	buf = mem_get(stack_address + 8, S_LONG);
+	/* Getenv_common currently reads only the primary ENV_TOP block. */
+	if (env != 0)
+		return -10;
+	name_ptr = run68_guest_string(name, 255);
+	if (name_ptr == NULL || !run68_guest_buffer_ok(buf, 256u))
+		return -14;
+	return Getenv_common(name_ptr, prog_ptr + buf);
+}
+
 Long Getenv_common(const char *name_p, char *buf_p)
 {
 	unsigned char *env_end = (unsigned char *)prog_ptr + ENV_TOP + ENV_SIZE;

@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "run68.h"
+#include "link_l_case.h"
 
 Long ra[8];
 Long rd[9];
@@ -443,18 +444,22 @@ static void test_link_unlk(void)
 	pc = 0;
 	unexpected_error = 0;
 	movem_write_count = 0;
-	control_immediate = (Long)UINT32_C(0xffff0000); /* -65536 */
-	ra[7] = 0x20000;
-	ra[0] = 0x12345678;
-	if (line4(link_l_a0) != FALSE || unexpected_error || pc != 6 ||
-	    ra[0] != 0x1fffc || ra[7] != 0x0fffc || movem_write_count != 1 ||
-	    movem_write_address[0] != 0x1fffc ||
-	    movem_write_data[0] != 0x12345678 ||
+	/* Keep this state vector identical to the Musashi LINK.L test. */
+	pc = (Long)LINK_L_INITIAL_PC;
+	control_immediate = (Long)LINK_L_DISPLACEMENT;
+	ra[7] = (Long)LINK_L_INITIAL_SP;
+	ra[0] = (Long)LINK_L_INITIAL_A0;
+	if (line4(link_l_a0) != FALSE || unexpected_error ||
+	    (ULong)pc != LINK_L_EXPECTED_PC ||
+	    (ULong)ra[0] != LINK_L_EXPECTED_FRAME ||
+	    (ULong)ra[7] != LINK_L_EXPECTED_SP || movem_write_count != 1 ||
+	    (ULong)movem_write_address[0] != LINK_L_EXPECTED_FRAME ||
+	    (ULong)movem_write_data[0] != LINK_L_INITIAL_A0 ||
 	    movem_write_size[0] != S_LONG) {
 		fprintf(stderr,
-		        "LINK.L A0,#-0x10000 failed: A7=%08x A0=%08x pc=%d "
+		        "LINK.L A0,#-0x10000 failed: A7=%08x A0=%08x pc=%08x "
 		        "writes=%u err=%d\n",
-		        (ULong)ra[7], (ULong)ra[0], pc, movem_write_count,
+		        (ULong)ra[7], (ULong)ra[0], (ULong)pc, movem_write_count,
 		        unexpected_error);
 		failures++;
 	}

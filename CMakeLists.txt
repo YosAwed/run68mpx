@@ -81,6 +81,8 @@ set(SRC
     src/run68.c
     src/stack_layout.c
     src/envblock.c
+    src/gueststr.c
+    src/dos_abi.c
     src/x68k_audio.c
     src/x68k_bus.c
     src/iocscall.c
@@ -337,10 +339,19 @@ if(BUILD_TESTING)
     tests/test_doscall_cli.c
     src/envblock.c
     src/fatchk.c
+    src/gueststr.c
+    src/dos_abi.c
     src/datetime.c
   )
   target_include_directories(run68_test_doscall_cli PRIVATE src)
   add_test(NAME dos_cli_calls COMMAND run68_test_doscall_cli)
+
+  add_executable(run68_test_stack_parse
+    tests/test_stack_parse.c
+    src/stack_layout.c
+  )
+  target_include_directories(run68_test_stack_parse PRIVATE src)
+  add_test(NAME stack_size_parse COMMAND run68_test_stack_parse)
 
   add_executable(run68_test_iocscall
     tests/test_iocscall.c
@@ -391,6 +402,7 @@ if(RUN68_ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
             run68_test_lineb
             run68_test_exceptions
             run68_test_stack_layout
+            run68_test_stack_parse
             run68_test_iocscall
             run68_test_doscall_cli)
       target_compile_options(${test_target} PRIVATE ${RUN68_SANITIZER_FLAGS})

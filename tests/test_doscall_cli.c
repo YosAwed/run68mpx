@@ -9,8 +9,14 @@ static UChar memory[ENV_TOP + ENV_SIZE + 64];
 static int failures;
 
 #define CUSTOM_ENV 0x1000
+#define NAME_ADDR 0x2000
+#define VALUE_ADDR 0x2100
+#define GETENV_BUF 0x2200
+#define CALL_STACK 0x3000
 #define FATCHK_PATH 0x4000
 #define FATCHK_BUFFER 0x5000
+#define ABI_STACK 0x6000
+#define PDB_ADDR 0x7000
 
 Long mem_get(Long address, char size)
 {
@@ -82,12 +88,23 @@ static void expect_string(const char *name, const char *expected,
 	}
 }
 
+static void expect_true(const char *name, BOOL value)
+{
+	if (!value) {
+		fprintf(stderr, "%s: expected TRUE\n", name);
+		failures++;
+	}
+}
+
 static void reset_env(void)
 {
 	memset(memory, 0, sizeof(memory));
 	prog_ptr = (char *)memory;
 	mem_aloc = (Long)sizeof(memory);
 	mem_set(ENV_TOP, ENV_SIZE, S_LONG);
+	nest_cnt = 0;
+	psp[0] = PDB_ADDR;
+	mem_set(PDB_ADDR + 0x10, ENV_TOP, S_LONG);
 }
 
 static void test_setenv_getenv(void)
@@ -240,11 +257,121 @@ static void test_settime_word(void)
 	}
 }
 
+static void put_call_args(Long name, Long env, Long value_or_buf)
+{
+	mem_set(CALL_STACK, name, S_LONG);
+	mem_set(CALL_STACK + 4, env, S_LONG);
+	mem_set(CALL_STACK + 8, value_or_buf, S_LONG);
+}
+
+static void test_setenv_doscall_path(void)
+{
+	char *entry;
+
+	reset_env();
+	strcpy((char *)memory + NAME_ADDR, "FOO");
+	strcpy((char *)memory + VALUE_ADDR, "bar");
+	/* ENVPTR=0 must resolve the current process environment via its PDB. */
+	put_call_args(NAME_ADDR, 0, VALUE_ADDR);
+	expect_long("DOSCALL SETENV FOO", 0, run68_setenv_call(CALL_STACK));
+	entry = (char *)memory + ENV_TOP + 4;
+	expect_string("DOSCALL SETENV entry", "FOO=bar", entry);
+
+	/* Empty SETLINE deletes the variable (not NAME=). */
+	memory[VALUE_ADDR] = '\0';
+	put_call_args(NAME_ADDR, 0, VALUE_ADDR);
+	expect_long("DOSCALL SETENV empty deletes", 0,
+	            run68_setenv_call(CALL_STACK));
+	if (entry[0] != '\0') {
+		fprintf(stderr,
+		        "empty SETLINE left residue \"%s\" instead of deleting\n",
+		        entry);
+		failures++;
+	}
+	put_call_args(NAME_ADDR, 0, GETENV_BUF);
+	expect_long("GETENV after empty delete", -10,
+	            run68_getenv_call(CALL_STACK));
+}
+
+static void test_guest_string_bounds(void)
+{
+	Long near_end = (Long)sizeof(memory) - 8;
+
+	reset_env();
+	memset(memory + near_end, 'A', 8);
+	if (run68_guest_string(near_end, 255) != NULL) {
+		fprintf(stderr, "unterminated guest string accepted\n");
+		failures++;
+	}
+
+	memset(memory + NAME_ADDR, 'N', 256);
+	memory[NAME_ADDR + 256] = '\0';
+	put_call_args(NAME_ADDR, ENV_TOP, VALUE_ADDR);
+	strcpy((char *)memory + VALUE_ADDR, "x");
+	expect_long("SETENV rejects overlong name", -14,
+	            run68_setenv_call(CALL_STACK));
+
+	strcpy((char *)memory + NAME_ADDR, "OK");
+	memset(memory + VALUE_ADDR, 'V', 256);
+	memory[VALUE_ADDR + 256] = '\0';
+	put_call_args(NAME_ADDR, ENV_TOP, VALUE_ADDR);
+	expect_long("SETENV rejects overlong value", -14,
+	            run68_setenv_call(CALL_STACK));
+}
+
+static void test_s_malloc_process_abi(void)
+{
+	short mode = -1;
+	short id = -1;
+	Long length = -1;
+	Long owner = -1;
+	Long start = -1;
+	Long initial = -1;
+
+	reset_env();
+	/* MD.w + LEN.l: length starts at SP+2, not SP+0. */
+	mem_set(ABI_STACK, 0x0001, S_WORD);
+	mem_set(ABI_STACK + 2, 0x12345678, S_LONG);
+	expect_true("S_MALLOC ABI parse",
+	            run68_parse_s_malloc_abi(ABI_STACK, &mode, &length, &owner));
+	expect_long("S_MALLOC mode", 1, mode);
+	expect_long("S_MALLOC length", 0x12345678, length);
+	expect_long("S_MALLOC owner default", 0, owner);
+	expect_long("S_MALLOC ABI validate", 0,
+	            run68_s_malloc_call(ABI_STACK));
+
+	mem_set(ABI_STACK, 0x8002, S_WORD);
+	mem_set(ABI_STACK + 2, 0x100, S_LONG);
+	mem_set(ABI_STACK + 6, 0, S_LONG);
+	expect_true("S_MALLOC paired ABI",
+	            run68_parse_s_malloc_abi(ABI_STACK, &mode, &length, &owner));
+	expect_long("S_MALLOC paired mode", (Long)(short)0x8002, mode);
+	expect_long("S_MALLOC paired length", 0x100, length);
+
+	/* ID.w + 3 longs; unimplemented must fail, not succeed. */
+	mem_set(ABI_STACK, 1, S_WORD);
+	mem_set(ABI_STACK + 2, 0x1000, S_LONG);
+	mem_set(ABI_STACK + 6, 0x2000, S_LONG);
+	mem_set(ABI_STACK + 10, 0x3000, S_LONG);
+	expect_true("S_PROCESS ABI parse",
+	            run68_parse_s_process_abi(ABI_STACK, &id, &start, &length,
+	                                      &initial));
+	expect_long("S_PROCESS id", 1, id);
+	expect_long("S_PROCESS start", 0x1000, start);
+	expect_long("S_PROCESS length", 0x2000, length);
+	expect_long("S_PROCESS initial", 0x3000, initial);
+	expect_long("S_PROCESS unimplemented", -14,
+	            run68_s_process_call(ABI_STACK));
+}
+
 int main(void)
 {
 	test_setenv_getenv();
 	test_setenv_explicit_block();
 	test_malformed_environment();
+	test_setenv_doscall_path();
+	test_guest_string_bounds();
+	test_s_malloc_process_abi();
 	test_fatchk_forms();
 	test_settime_word();
 	return failures == 0 ? 0 : 1;

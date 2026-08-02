@@ -1,0 +1,13 @@
+#ifndef RUN68_TEST_LINK_L_CASE_H
+#define RUN68_TEST_LINK_L_CASE_H
+
+/* Shared state vector: both CPU backends must produce the same LINK.L state. */
+#define LINK_L_INITIAL_PC UINT32_C(0x0001000a)
+#define LINK_L_INITIAL_SP UINT32_C(0x00030000)
+#define LINK_L_INITIAL_A0 UINT32_C(0x00022222)
+#define LINK_L_DISPLACEMENT UINT32_C(0xffff0000)
+#define LINK_L_EXPECTED_FRAME UINT32_C(0x0002fffc)
+#define LINK_L_EXPECTED_SP UINT32_C(0x0001fffc)
+#define LINK_L_EXPECTED_PC UINT32_C(0x00010010)
+
+#endif

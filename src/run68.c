@@ -67,7 +67,6 @@
 
 #define	MAIN
 
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -224,8 +223,7 @@ Restart:
             case 'S':
             {
                 char *size_text;
-                char *end = NULL;
-                long kb;
+                Long stack_kb;
 
                 if (argv[i][2] != '\0') {
                     size_text = &argv[i][2];
@@ -237,16 +235,13 @@ Restart:
                     i++;
                     size_text = argv[i];
                 }
-				errno = 0;
-				kb = strtol(size_text, &end, 10);
-				if (errno == ERANGE || end == size_text || *end != '\0' ||
-				    kb < RUN68_MIN_STACK_KB || kb > RUN68_MAX_STACK_KB ||
-				    !run68_set_stack_size_kb((Long)kb)) {
-                    fprintf(stderr,
-                            "-S の値は %d〜%d (KB) の整数で指定してください。\n",
-                            RUN68_MIN_STACK_KB, RUN68_MAX_STACK_KB);
-                    return 1;
-                }
+				if (!run68_parse_stack_size_kb(size_text, &stack_kb) ||
+				    !run68_set_stack_size_kb(stack_kb)) {
+					fprintf(stderr,
+					        "-S の値は %d〜%d (KB) の整数で指定してください。\n",
+					        RUN68_MIN_STACK_KB, RUN68_MAX_STACK_KB);
+					return 1;
+				}
                 break;
             }
             case 't':

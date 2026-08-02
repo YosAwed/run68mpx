@@ -496,11 +496,22 @@ void check(char *mode, Long src, Long dest, Long result, int size, short before)
 #endif
 
 BOOL	run68_set_stack_size_kb( Long kb );
+BOOL	run68_parse_stack_size_kb( const char *text, Long *kb_out );
 BOOL	run68_stack_fits_memory( Long memory_bytes );
+const char *run68_guest_string( Long address, size_t max_chars );
+BOOL	run68_guest_buffer_ok( Long address, size_t bytes );
 Long	Getenv_common( const char *name_p, char *buf_p );
 Long	Setenv_common( Long env_address, const char *name_p,
 	               const char *value_p );
 Long	run68_fatchk_call( Long stack_address );
+Long	run68_setenv_call( Long stack_address );
+Long	run68_getenv_call( Long stack_address );
+Long	run68_s_malloc_call( Long stack_address );
+Long	run68_s_process_call( Long stack_address );
+BOOL	run68_parse_s_malloc_abi( Long stack_address, short *mode,
+	                          Long *length, Long *owner );
+BOOL	run68_parse_s_process_abi( Long stack_address, short *id, Long *start,
+	                           Long *length, Long *initial );
 
 /* exceptions.c */
 void cpu_set_sr(UShort new_sr);
