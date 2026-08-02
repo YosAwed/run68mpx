@@ -498,7 +498,9 @@ void check(char *mode, Long src, Long dest, Long result, int size, short before)
 BOOL	run68_set_stack_size_kb( Long kb );
 BOOL	run68_stack_fits_memory( Long memory_bytes );
 Long	Getenv_common( const char *name_p, char *buf_p );
-Long	Setenv_common( const char *name_p, const char *value_p );
+Long	Setenv_common( Long env_address, const char *name_p,
+	               const char *value_p );
+Long	run68_fatchk_call( Long stack_address );
 
 /* exceptions.c */
 void cpu_set_sr(UShort new_sr);

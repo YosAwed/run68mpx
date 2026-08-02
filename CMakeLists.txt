@@ -57,6 +57,7 @@ set(SRC
     src/eaaccess.c
     src/exceptions.c
     src/exec.c
+    src/fatchk.c
     src/getini.c
     src/hostconsole.c
     src/key.c
@@ -335,6 +336,7 @@ if(BUILD_TESTING)
   add_executable(run68_test_doscall_cli
     tests/test_doscall_cli.c
     src/envblock.c
+    src/fatchk.c
     src/datetime.c
   )
   target_include_directories(run68_test_doscall_cli PRIVATE src)

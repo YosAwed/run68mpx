@@ -132,7 +132,6 @@ static Long Getenv( Long, Long, Long );
 static Long Setenv( Long, Long, Long );
 static Long Wait( void );
 static Long Setpdb( Long );
-static Long Fatchk( Long, Long, UShort );
 static Long Maketmp( Long, short );
 static Long S_malloc( short, Long, Long );
 static Long S_mfree( Long );
@@ -515,12 +514,10 @@ int dos_call( UChar code )
 		break;
 	  case 0x17:    /* FATCHK */
 		data = mem_get( stack_adr, S_LONG );
-		buf  = mem_get( stack_adr + 4, S_LONG );
-		srt  = (short)mem_get( stack_adr + 8, S_WORD );
 		if (func_trace_f) {
 			printf("%-10s file=$%08X\n", "FATCHK", data);
 		}
-		rd [ 0 ] = Fatchk( data, buf, (UShort)srt );
+		rd [ 0 ] = run68_fatchk_call( stack_adr );
 		break;
 	  case 0x1A:    /* GETSS */
 		buf = mem_get( stack_adr, S_LONG );
@@ -2928,9 +2925,8 @@ static Long Setenv( Long name, Long env, Long value )
 {
 	const char *name_ptr;
 	const char *value_ptr;
+	Long env_address;
 
-	if ( env != 0 )
-		return( -10 );
 	name_ptr = guest_string(name);
 	if (name_ptr == NULL)
 		return( -14 );
@@ -2940,7 +2936,17 @@ static Long Setenv( Long name, Long env, Long value )
 		value_ptr = guest_string(value);
 	if (value != 0 && value_ptr == NULL)
 		return( -14 );
-	return Setenv_common(name_ptr, value_ptr);
+	if (env != 0) {
+		env_address = env;
+	} else {
+		ULong pdb = (ULong)psp[nest_cnt];
+
+		if ((pdb & 1u) != 0 || pdb > (ULong)mem_aloc ||
+		    0x14u > (ULong)mem_aloc - pdb)
+			return -10;
+		env_address = mem_get((Long)pdb + 0x10, S_LONG);
+	}
+	return Setenv_common(env_address, name_ptr, value_ptr);
 }
 
 static Long Wait( void )
@@ -2957,33 +2963,6 @@ static Long Setpdb( Long pdb )
 		return -14;
 	psp [ nest_cnt ] = pdb - MB_SIZE;
 	return prev;
-}
-
-static Long Fatchk( Long file, Long raw_buf, UShort buffer_size )
-{
-	struct stat info;
-	const char *path;
-	char normalized[256];
-	ULong buffer = (ULong)raw_buf;
-	BOOL bounded = (buffer & UINT32_C(0x80000000)) != 0;
-	ULong sectors;
-	const ULong result_size = 10;
-
-	path = guest_string(file);
-	buffer &= UINT32_C(0x7fffffff);
-	if (path == NULL || !host_path(path, normalized, sizeof(normalized)) ||
-	    buffer > (ULong)mem_aloc ||
-	    result_size > (ULong)mem_aloc - buffer ||
-	    (bounded && buffer_size < result_size))
-		return -14;
-	if (stat(normalized, &info) != 0)
-		return -2; /* ファイルが見つからない */
-	/* Host files are represented as one contiguous synthetic sector run. */
-	sectors = (ULong)(((uint64_t)info.st_size + 1023u) / 1024u);
-	mem_set((Long)buffer, 0, S_WORD);       /* drive A: */
-	mem_set((Long)buffer + 2, 1, S_LONG);  /* first sector */
-	mem_set((Long)buffer + 6, (Long)sectors, S_LONG);
-	return (Long)result_size;
 }
 
 static Long Maketmp( Long name, short attr )
